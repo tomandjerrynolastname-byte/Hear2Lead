@@ -1,13 +1,38 @@
 <?php
 // index.php - Main Portal Selector
 require_once __DIR__ . '/config/db.php';
+
+// Prevent browser from serving cached index page via Back button
+header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+header("Cache-Control: post-check=0, pre-check=0", false);
+header("Pragma: no-cache");
+header("Expires: Thu, 01 Jan 1970 00:00:00 GMT");
+
+// If someone is logged in or has an active session, index is NOT accessible until they log out
+if (isset($_SESSION['user_id'])) {
+    header("Location: leadership/dashboard.php");
+    exit;
+} elseif (isset($_SESSION['student_id'])) {
+    header("Location: student/index.php");
+    exit;
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Student Leadership Management System</title>
+  <title>Hear2Lead</title>
+  
+  <script>
+    // Force reload if page is restored from bfcache on back navigation
+    window.addEventListener('pageshow', function (e) {
+      if (e.persisted || (window.performance && window.performance.navigation && window.performance.navigation.type === 2)) {
+        window.location.reload();
+      }
+    });
+  </script>
+  
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="assets/css/style.css">
@@ -23,12 +48,13 @@ require_once __DIR__ . '/config/db.php';
       background-position: center;
       background-repeat: no-repeat;
       background-attachment: fixed;
-      padding: 2.5rem 1rem;
+      padding: 6rem 1rem 3rem;
+      position: relative;
     }
     .landing-header {
       text-align: center;
       max-width: 650px;
-      margin-bottom: 3rem;
+      margin-bottom: 2.5rem;
     }
     .landing-header h1 {
       font-size: 2.5rem;
@@ -53,6 +79,7 @@ require_once __DIR__ . '/config/db.php';
       .landing-header h1 { font-size: 1.85rem; }
       .landing-header p { font-size: 0.95rem; }
       .portal-selection-card { padding: 1.75rem 1.25rem; }
+      .portal-landing { padding-top: 7.5rem; }
     }
     .portal-selection-card {
       background: var(--white);
@@ -121,11 +148,61 @@ require_once __DIR__ . '/config/db.php';
   </style>
 </head>
 <body>
+<!-- Global Page Transition Loader & Progress Bar -->
+<div id="globalProgressBar" class="page-progress-bar"></div>
+<div id="globalPageLoader" class="page-loader-overlay">
+  <div class="page-loader-content">
+    <div class="loader-spinner-wrapper">
+      <div class="loader-ring"></div>
+      <div class="loader-ring"></div>
+      <div class="loader-ring"></div>
+      <div class="loader-logo-center">
+        <i class="fa-solid fa-graduation-cap"></i>
+      </div>
+    </div>
+    <div class="loader-text">Loading...</div>
+    <div class="loader-subtext">Please wait a moment</div>
+  </div>
+</div>
+
+<!-- Landing Page Top Navigation Bar -->
+<header class="landing-topbar">
+  <a href="index.php" class="landing-brand">
+    <img src="assets/uploads/logoswhite.jpg" alt="Logo" class="landing-brand-logo">
+    <span class="landing-brand-name">Hear2Lead</span>
+  </a>
+</header>
 
 <div class="portal-landing">
+  <!-- Status Toast Notifications (Bottom Right) -->
+  <div class="toast-container" id="toastContainer">
+    <?php if (!empty($_GET['success'])): ?>
+      <div class="toast toast-success alert-auto-dismiss" role="alert">
+        <div class="toast-icon"><i class="fa-solid fa-circle-check"></i></div>
+        <div class="toast-body">
+          <div class="toast-title">Success</div>
+          <div class="toast-message"><?= htmlspecialchars($_GET['success']) ?></div>
+        </div>
+        <button type="button" class="toast-close" aria-label="Close">&times;</button>
+        <div class="toast-progress"><div class="toast-progress-bar"></div></div>
+      </div>
+    <?php endif; ?>
+    <?php if (!empty($_GET['error']) && empty($_GET['modal'])): ?>
+      <div class="toast toast-danger alert-auto-dismiss" role="alert">
+        <div class="toast-icon"><i class="fa-solid fa-circle-exclamation"></i></div>
+        <div class="toast-body">
+          <div class="toast-title">Notice</div>
+          <div class="toast-message"><?= htmlspecialchars($_GET['error']) ?></div>
+        </div>
+        <button type="button" class="toast-close" aria-label="Close">&times;</button>
+        <div class="toast-progress"><div class="toast-progress-bar"></div></div>
+      </div>
+    <?php endif; ?>
+  </div>
+
   <div class="landing-header">
     <img src="assets/uploads/logoswhite.jpg" alt="School Logo" style="width: 100px; height: 100px; object-fit: cover; border-radius: 50%; border: 3px solid var(--cream); margin: 0 auto 1.25rem auto; box-shadow: 0 8px 25px rgba(0,0,0,0.4); display: block;">
-    <h1>Student Leadership System</h1>
+    <h1>Hear2Lead</h1>
     <p>Select your portal to explore organization projects, track accomplishments, submit feedback, or organize student leadership tasks.</p>
   </div>
 
@@ -145,9 +222,9 @@ require_once __DIR__ . '/config/db.php';
         <li><i class="fa-solid fa-circle-check"></i> Submit Suggestions & Feedbacks</li>
       </ul>
 
-      <a href="student/index.php" class="btn btn-primary" style="width: 100%; font-size: 1rem; padding: 0.8rem 1.5rem;">
-        Enter Student Portal <i class="fa-solid fa-arrow-right"></i>
-      </a>
+      <button type="button" onclick="openAuthModal('student')" class="btn btn-primary" style="width: 100%; font-size: 1rem; padding: 0.8rem 1.5rem; cursor: pointer; border: none;">
+        Student Login <i class="fa-solid fa-right-to-bracket"></i>
+      </button>
     </div>
 
     <!-- Leadership Portal Card -->
@@ -165,18 +242,14 @@ require_once __DIR__ . '/config/db.php';
         <li><i class="fa-solid fa-circle-check"></i> Monitor Student Suggestions & Feedbacks</li>
       </ul>
 
-      <?php if (isset($_SESSION['user_id'])): ?>
-        <a href="leadership/dashboard.php" class="btn btn-primary" style="width: 100%; font-size: 1rem; padding: 0.8rem 1.5rem; background-color: var(--accent);">
-          Go to Dashboard <i class="fa-solid fa-gauge-high"></i>
-        </a>
-      <?php else: ?>
-        <a href="leadership/login.php" class="btn btn-primary" style="width: 100%; font-size: 1rem; padding: 0.8rem 1.5rem; background-color: var(--accent);">
-          Officer Login <i class="fa-solid fa-right-to-bracket"></i>
-        </a>
-      <?php endif; ?>
+      <button type="button" onclick="openAuthModal('officer')" class="btn btn-primary" style="width: 100%; font-size: 1rem; padding: 0.8rem 1.5rem; background-color: var(--accent); cursor: pointer; border: none;">
+        Officer Login <i class="fa-solid fa-right-to-bracket"></i>
+      </button>
     </div>
   </div>
 </div>
 
+<?php include_once __DIR__ . '/includes/login_modal.php'; ?>
+<script src="assets/js/main.js"></script>
 </body>
 </html>

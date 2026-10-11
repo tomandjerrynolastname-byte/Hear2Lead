@@ -1,6 +1,7 @@
 <?php
 // student/accomplishments.php - Student View Accomplishments
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../includes/student_auth_check.php';
 include_once __DIR__ . '/../includes/header.php';
 
 $selected_org_id = isset($_GET['org_id']) ? intval($_GET['org_id']) : 0;
@@ -17,8 +18,8 @@ $accomplishments = $pdo->query($query)->fetchAll();
 
 <div class="page-header">
   <div>
-    <h1 class="page-title"><i class="fa-solid fa-trophy" style="color: var(--warning);"></i> Organization Accomplishments</h1>
-    <p class="page-subtitle">Celebrating the milestone accomplishments and successful initiatives of student leadership.</p>
+    <h1 class="page-title"><i class="fa-solid fa-trophy" style="color: var(--warning);"></i> Accomplishments</h1>
+    <p class="page-subtitle">Completed activities, achievements, and documentation.</p>
   </div>
 
   <div>

@@ -1,6 +1,7 @@
 <?php
 // student/index.php - Student Portal Overview
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../includes/student_auth_check.php';
 include_once __DIR__ . '/../includes/header.php';
 
 // Fetch organizations
@@ -25,8 +26,9 @@ $projects = $pdo->query("SELECT p.*, o.name as org_name, o.acronym FROM projects
 
 <!-- Hero Banner -->
 <div class="hero-card">
-  <h1 class="hero-title">Welcome to the Student Portal</h1>
-  <p class="hero-desc">Discover student organization achievements, monitor program progress, check project timelines, and share your suggestions & feedback directly with student leaders!</p>
+  <div style="font-size: 0.9rem; text-transform: uppercase; font-weight: 800; letter-spacing: 0.08em; color: rgba(255,255,255,0.85); margin-bottom: 0.25rem;">Student Portal</div>
+  <h1 class="hero-title" style="margin-top: 0; font-size: 2.1rem;">For students and organization members</h1>
+  <p class="hero-desc">Explore completed activities, organization programs & schedules, overall project progress, and submit feedback or concerns directly to student leaders.</p>
 
   <!-- Organization Filter -->
   <form method="GET" action="index.php" style="display: flex; gap: 0.75rem; align-items: center; max-width: 450px;">
@@ -140,8 +142,8 @@ $projects = $pdo->query("SELECT p.*, o.name as org_name, o.acronym FROM projects
   <div>
     <!-- Submit Feedback Banner Card -->
     <div class="panel" style="background: linear-gradient(135deg, #f0f9ff, #e0f2fe); border-color: #bae6fd;">
-      <h3 style="font-size: 1.15rem; color: #0369a1; margin-bottom: 0.5rem;"><i class="fa-solid fa-paper-plane"></i> Have a Suggestion?</h3>
-      <p style="font-size: 0.9rem; color: #075985; margin-bottom: 1rem;">Voice your thoughts, ideas, or feedback to your student leaders (e.g. SSLG). Submissions can be anonymous.</p>
+      <h3 style="font-size: 1.15rem; color: #0369a1; margin-bottom: 0.5rem;"><i class="fa-solid fa-paper-plane"></i> Have a Suggestion or Concern?</h3>
+      <p style="font-size: 0.9rem; color: #075985; margin-bottom: 1rem;">Voice your thoughts, ideas, or feedback to your student leaders (e.g. SSLG). Submissions are recorded under your verified student account.</p>
       <a href="feedback.php" class="btn btn-primary" style="width: 100%;"><i class="fa-solid fa-pen-to-square"></i> Submit Feedback / Suggestion</a>
     </div>
 

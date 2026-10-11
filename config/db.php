@@ -42,6 +42,29 @@ function getDBConnection() {
                     $pdo->exec($sql);
                 }
             }
+
+            // Ensure students table exists
+            $studentTableCheck = $pdo->query("SHOW TABLES LIKE 'students'")->rowCount();
+            if ($studentTableCheck === 0) {
+                $pdo->exec("CREATE TABLE IF NOT EXISTS `students` (
+                    `id` INT AUTO_INCREMENT PRIMARY KEY,
+                    `student_lrn` VARCHAR(50) NOT NULL UNIQUE,
+                    `full_name` VARCHAR(100) NOT NULL,
+                    `grade_section` VARCHAR(50) NOT NULL,
+                    `email` VARCHAR(100) DEFAULT NULL,
+                    `password` VARCHAR(255) NOT NULL,
+                    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+                // Seed sample student accounts (password: student123)
+                $demoPassword = password_hash('student123', PASSWORD_DEFAULT);
+                $seedStmt = $pdo->prepare("INSERT INTO `students` (`student_lrn`, `full_name`, `grade_section`, `email`, `password`) VALUES (?, ?, ?, ?, ?)");
+                $seedStmt->execute(['2026-0001', 'Alex Morgan', 'Grade 11 - STEM', 'alex.morgan@student.edu.ph', $demoPassword]);
+                $seedStmt->execute(['2026-0002', 'Samantha Cruz', 'Grade 10 - Rizal', 'samantha.cruz@student.edu.ph', $demoPassword]);
+            }
+
+            // Purge any legacy anonymous feedback submissions
+            $pdo->exec("DELETE FROM feedbacks WHERE student_name = 'Anonymous Student' OR student_name IS NULL OR TRIM(student_name) = ''");
         } catch (PDOException $e) {
             die("<div style='padding: 20px; font-family: sans-serif; background: #fee2e2; border: 1px solid #f87171; color: #991b1b; border-radius: 8px; margin: 20px;'>
                 <h3>Database Connection Error</h3>

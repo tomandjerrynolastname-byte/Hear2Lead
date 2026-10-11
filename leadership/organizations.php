@@ -3,6 +3,12 @@
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/auth_check.php';
 
+// Strict RBAC: Only Admin can access organizations management
+if (($_SESSION['user_role'] ?? '') !== 'Admin') {
+    header("Location: dashboard.php?error=" . urlencode("Access denied. Only Administrators can access the Organizations Management page."));
+    exit;
+}
+
 $success_msg = '';
 $error_msg = '';
 
@@ -177,14 +183,26 @@ include_once __DIR__ . '/../includes/header.php';
 </div>
 
 <?php if (!empty($success_msg)): ?>
-  <div class="alert alert-success alert-auto-dismiss">
-    <span><i class="fa-solid fa-circle-check"></i> <?= htmlspecialchars($success_msg) ?></span>
+  <div class="toast toast-success alert-auto-dismiss" role="alert">
+    <div class="toast-icon"><i class="fa-solid fa-circle-check"></i></div>
+    <div class="toast-body">
+      <div class="toast-title">Success</div>
+      <div class="toast-message"><?= htmlspecialchars($success_msg) ?></div>
+    </div>
+    <button type="button" class="toast-close" aria-label="Close">&times;</button>
+    <div class="toast-progress"><div class="toast-progress-bar"></div></div>
   </div>
 <?php endif; ?>
 
 <?php if (!empty($error_msg)): ?>
-  <div class="alert alert-danger alert-auto-dismiss">
-    <span><i class="fa-solid fa-circle-exclamation"></i> <?= htmlspecialchars($error_msg) ?></span>
+  <div class="toast toast-danger alert-auto-dismiss" role="alert">
+    <div class="toast-icon"><i class="fa-solid fa-circle-exclamation"></i></div>
+    <div class="toast-body">
+      <div class="toast-title">Notice</div>
+      <div class="toast-message"><?= htmlspecialchars($error_msg) ?></div>
+    </div>
+    <button type="button" class="toast-close" aria-label="Close">&times;</button>
+    <div class="toast-progress"><div class="toast-progress-bar"></div></div>
   </div>
 <?php endif; ?>
 

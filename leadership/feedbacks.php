@@ -3,21 +3,32 @@
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/auth_check.php';
 
-$org_id = $_SESSION['org_id'];
+$current_role = $_SESSION['user_role'] ?? 'Officer';
+$is_admin = ($current_role === 'Admin');
+$current_org_id = intval($_SESSION['org_id']);
+$filter_org = $is_admin ? (isset($_GET['org_id']) ? intval($_GET['org_id']) : 0) : $current_org_id;
+
 $success_msg = '';
 $error_msg = '';
 
 // Handle Response Action
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'respond_feedback') {
-    $feedback_id = intval($_POST['feedback_id']);
-    $status = $_POST['status'];
-    $officer_response = trim($_POST['officer_response']);
+    $feedback_id = intval($_POST['feedback_id'] ?? 0);
+    $status = $_POST['status'] ?? 'Under Review';
+    $officer_response = trim($_POST['officer_response'] ?? '');
 
     if (empty($officer_response)) {
         $error_msg = "Please write a response before saving.";
     } else {
-        $stmt = $pdo->prepare("UPDATE feedbacks SET status = ?, officer_response = ?, responded_at = NOW() WHERE id = ? AND org_id = ?");
-        if ($stmt->execute([$status, $officer_response, $feedback_id, $org_id])) {
+        if ($is_admin) {
+            $stmt = $pdo->prepare("UPDATE feedbacks SET status = ?, officer_response = ?, responded_at = NOW() WHERE id = ?");
+            $executed = $stmt->execute([$status, $officer_response, $feedback_id]);
+        } else {
+            $stmt = $pdo->prepare("UPDATE feedbacks SET status = ?, officer_response = ?, responded_at = NOW() WHERE id = ? AND org_id = ?");
+            $executed = $stmt->execute([$status, $officer_response, $feedback_id, $current_org_id]);
+        }
+
+        if ($executed) {
             $success_msg = "Response published! It is now visible on the Student Portal.";
         } else {
             $error_msg = "Failed to update feedback response.";
@@ -25,24 +36,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
 }
 
+// Handle Delete Feedback Action
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_feedback') {
+    $feedback_id = intval($_POST['feedback_id'] ?? 0);
+    if ($is_admin) {
+        $stmt = $pdo->prepare("DELETE FROM feedbacks WHERE id = ?");
+        $executed = $stmt->execute([$feedback_id]);
+    } else {
+        $stmt = $pdo->prepare("DELETE FROM feedbacks WHERE id = ? AND org_id = ?");
+        $executed = $stmt->execute([$feedback_id, $current_org_id]);
+    }
+
+    if ($executed) {
+        $success_msg = "Feedback deleted successfully.";
+    } else {
+        $error_msg = "Failed to delete feedback.";
+    }
+}
+
+// Fetch all orgs for Admin filter dropdown
+$all_orgs = $pdo->query("SELECT id, name, acronym FROM organizations ORDER BY acronym ASC")->fetchAll();
+
 // Filter Status
 $filter_status = $_GET['status'] ?? '';
 
-$query = "SELECT * FROM feedbacks WHERE org_id = $org_id ";
-if (!empty($filter_status)) {
-    $query .= "AND status = " . $pdo->quote($filter_status) . " ";
-}
-$query .= "ORDER BY created_at DESC";
+$where = ["1=1"];
+$params = [];
 
-$feedbacks = $pdo->query($query)->fetchAll();
+if ($filter_org > 0) {
+    $where[] = "f.org_id = ?";
+    $params[] = $filter_org;
+}
+if (!empty($filter_status)) {
+    $where[] = "f.status = ?";
+    $params[] = $filter_status;
+}
+
+$where_sql = implode(" AND ", $where);
+$query = "SELECT f.*, o.acronym as org_acronym, o.name as org_name 
+          FROM feedbacks f 
+          JOIN organizations o ON f.org_id = o.id 
+          WHERE $where_sql 
+          ORDER BY f.created_at DESC";
+
+$stmt = $pdo->prepare($query);
+$stmt->execute($params);
+$feedbacks = $stmt->fetchAll();
 
 include_once __DIR__ . '/../includes/header.php';
 ?>
 
 <div class="page-header">
   <div>
-    <h1 class="page-title"><i class="fa-solid fa-comments" style="color: var(--accent);"></i> Student Suggestions & Feedbacks Monitor</h1>
-    <p class="page-subtitle">Review, address, and publish responses to feedback sent by students to <?= htmlspecialchars($_SESSION['org_acronym']) ?>.</p>
+    <h1 class="page-title"><i class="fa-solid fa-comments" style="color: var(--accent);"></i> Feedback and Concern Management</h1>
+    <p class="page-subtitle">
+      <?php if ($is_admin): ?>
+        Review, address, and publish responses to student feedback & concerns <?= $filter_org > 0 ? 'for selected organization' : 'across all student organizations' ?>.
+      <?php else: ?>
+        Review, address, and publish responses to student feedback & concerns sent to <strong><?= htmlspecialchars($_SESSION['org_acronym']) ?></strong>.
+      <?php endif; ?>
+    </p>
   </div>
 
   <a href="../student/feedback.php" target="_blank" class="btn btn-secondary">
@@ -51,28 +104,60 @@ include_once __DIR__ . '/../includes/header.php';
 </div>
 
 <?php if (!empty($success_msg)): ?>
-  <div class="alert alert-success alert-auto-dismiss">
-    <span><i class="fa-solid fa-circle-check"></i> <?= htmlspecialchars($success_msg) ?></span>
+  <div class="toast toast-success alert-auto-dismiss" role="alert">
+    <div class="toast-icon"><i class="fa-solid fa-circle-check"></i></div>
+    <div class="toast-body">
+      <div class="toast-title">Success</div>
+      <div class="toast-message"><?= htmlspecialchars($success_msg) ?></div>
+    </div>
+    <button type="button" class="toast-close" aria-label="Close">&times;</button>
+    <div class="toast-progress"><div class="toast-progress-bar"></div></div>
   </div>
 <?php endif; ?>
 
 <?php if (!empty($error_msg)): ?>
-  <div class="alert alert-danger alert-auto-dismiss">
-    <span><i class="fa-solid fa-triangle-exclamation"></i> <?= htmlspecialchars($error_msg) ?></span>
+  <div class="toast toast-danger alert-auto-dismiss" role="alert">
+    <div class="toast-icon"><i class="fa-solid fa-circle-exclamation"></i></div>
+    <div class="toast-body">
+      <div class="toast-title">Notice</div>
+      <div class="toast-message"><?= htmlspecialchars($error_msg) ?></div>
+    </div>
+    <button type="button" class="toast-close" aria-label="Close">&times;</button>
+    <div class="toast-progress"><div class="toast-progress-bar"></div></div>
   </div>
 <?php endif; ?>
 
 <!-- Filter Bar -->
 <div class="filter-bar">
-  <form method="GET" action="feedbacks.php" style="display: flex; gap: 1rem; align-items: center;">
-    <label class="form-label" style="margin: 0;">Filter Status:</label>
-    <select name="status" class="form-control" onchange="this.form.submit()" style="max-width: 220px;">
-      <option value="">All Feedbacks</option>
-      <option value="Pending" <?= $filter_status == 'Pending' ? 'selected' : '' ?>>Pending Review</option>
-      <option value="Under Review" <?= $filter_status == 'Under Review' ? 'selected' : '' ?>>Under Review</option>
-      <option value="In Action" <?= $filter_status == 'In Action' ? 'selected' : '' ?>>In Action</option>
-      <option value="Resolved" <?= $filter_status == 'Resolved' ? 'selected' : '' ?>>Resolved</option>
-    </select>
+  <form method="GET" action="feedbacks.php" style="display: flex; gap: 1rem; align-items: center; width: 100%; flex-wrap: wrap;">
+    <?php if ($is_admin): ?>
+      <div class="filter-group">
+        <label class="form-label" style="margin: 0;">Organization:</label>
+        <select name="org_id" class="form-control" onchange="this.form.submit()">
+          <option value="0">All Organizations</option>
+          <?php foreach ($all_orgs as $o): ?>
+            <option value="<?= $o['id'] ?>" <?= $filter_org == $o['id'] ? 'selected' : '' ?>>
+              <?= htmlspecialchars($o['acronym'] . ' - ' . $o['name']) ?>
+            </option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+    <?php endif; ?>
+
+    <div class="filter-group">
+      <label class="form-label" style="margin: 0;">Filter Status:</label>
+      <select name="status" class="form-control" onchange="this.form.submit()">
+        <option value="">All Feedbacks</option>
+        <option value="Pending" <?= $filter_status == 'Pending' ? 'selected' : '' ?>>Pending Review</option>
+        <option value="Under Review" <?= $filter_status == 'Under Review' ? 'selected' : '' ?>>Under Review</option>
+        <option value="In Action" <?= $filter_status == 'In Action' ? 'selected' : '' ?>>In Action</option>
+        <option value="Resolved" <?= $filter_status == 'Resolved' ? 'selected' : '' ?>>Resolved</option>
+      </select>
+    </div>
+
+    <?php if (!empty($filter_status) || ($is_admin && $filter_org > 0)): ?>
+      <a href="feedbacks.php" class="btn btn-secondary btn-sm"><i class="fa-solid fa-rotate-left"></i> Reset Filter</a>
+    <?php endif; ?>
   </form>
 </div>
 
@@ -81,22 +166,27 @@ include_once __DIR__ . '/../includes/header.php';
     <div class="panel" style="text-align: center; padding: 3rem; color: var(--gray-500);">
       <i class="fa-solid fa-inbox" style="font-size: 3rem; margin-bottom: 1rem; color: var(--gray-400);"></i>
       <h3>No Feedbacks Found</h3>
-      <p>No student feedback submissions recorded for this status filter.</p>
+      <p>No student feedback submissions recorded for this filter criteria.</p>
     </div>
   <?php else: ?>
     <?php foreach ($feedbacks as $fb): 
-      $status_badge = match($fb['status']) {
+      $fb_status_badges = [
         'Resolved' => 'badge-accomplished',
         'In Action' => 'badge-in-progress',
-        'Under Review' => 'badge-todo',
-        default => 'badge-planning'
-      };
+        'Under Review' => 'badge-todo'
+      ];
+      $status_badge = $fb_status_badges[$fb['status']] ?? 'badge-planning';
     ?>
       <div class="panel">
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
           <div>
-            <span class="badge badge-in-progress"><?= htmlspecialchars($fb['category']) ?></span>
-            <span class="badge <?= $status_badge ?>" style="margin-left: 0.25rem;">Status: <?= htmlspecialchars($fb['status']) ?></span>
+            <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;">
+              <span class="badge badge-in-progress"><?= htmlspecialchars($fb['category']) ?></span>
+              <span class="badge <?= $status_badge ?>">Status: <?= htmlspecialchars($fb['status']) ?></span>
+              <?php if ($is_admin && $filter_org === 0): ?>
+                <span class="badge badge-planning"><strong><?= htmlspecialchars($fb['org_acronym']) ?></strong></span>
+              <?php endif; ?>
+            </div>
             <h3 style="font-size: 1.2rem; color: var(--dark); margin-top: 0.4rem;"><?= htmlspecialchars($fb['subject']) ?></h3>
           </div>
 
@@ -114,9 +204,16 @@ include_once __DIR__ . '/../includes/header.php';
             <?= $fb['student_email'] ? '• <a href="mailto:' . htmlspecialchars($fb['student_email']) . '">' . htmlspecialchars($fb['student_email']) . '</a>' : '' ?>
           </div>
 
-          <button class="btn btn-primary btn-sm" onclick='openFeedbackRespondModal(<?= json_encode($fb) ?>)'>
-            <i class="fa-solid fa-reply"></i> <?= !empty($fb['officer_response']) ? 'Edit Response' : 'Respond / Update Status' ?>
-          </button>
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <button class="btn btn-primary btn-sm" onclick='openFeedbackRespondModal(<?= json_encode($fb) ?>)'>
+              <i class="fa-solid fa-reply"></i> <?= !empty($fb['officer_response']) ? 'Edit Response' : 'Respond / Update Status' ?>
+            </button>
+            <form method="POST" action="feedbacks.php" onsubmit="return confirm('Are you sure you want to permanently delete this feedback?');" style="display: inline; margin: 0;">
+              <input type="hidden" name="action" value="delete_feedback">
+              <input type="hidden" name="feedback_id" value="<?= $fb['id'] ?>">
+              <button type="submit" class="btn btn-danger btn-sm" title="Delete Feedback"><i class="fa-solid fa-trash"></i></button>
+            </form>
+          </div>
         </div>
 
         <!-- Display Current Officer Response if exists -->
@@ -176,5 +273,18 @@ include_once __DIR__ . '/../includes/header.php';
     </form>
   </div>
 </div>
+
+<script>
+function openFeedbackRespondModal(fb) {
+  document.getElementById('respond_feedback_id').value = fb.id;
+  document.getElementById('respond_student_name').textContent = fb.student_name;
+  document.getElementById('respond_subject').textContent = fb.subject;
+  document.getElementById('respond_message').textContent = '"' + fb.message + '"';
+  document.getElementById('respond_status').value = fb.status || 'Under Review';
+  document.getElementById('respond_officer_response').value = fb.officer_response || '';
+
+  document.getElementById('respondFeedbackModal').classList.add('active');
+}
+</script>
 
 <?php include_once __DIR__ . '/../includes/footer.php'; ?>

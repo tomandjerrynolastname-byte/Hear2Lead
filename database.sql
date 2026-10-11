@@ -93,12 +93,30 @@ CREATE TABLE IF NOT EXISTS `accomplishments` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- --------------------------------------------------------
--- Table: feedbacks (Suggestions & Feedbacks from Students)
+-- Table: students (Student Portal Accounts)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `students` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `student_lrn` VARCHAR(50) NOT NULL UNIQUE,
+  `full_name` VARCHAR(100) NOT NULL,
+  `grade_section` VARCHAR(50) NOT NULL,
+  `email` VARCHAR(100) DEFAULT NULL,
+  `password` VARCHAR(255) NOT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Sample Student Accounts (Password: 'student123')
+INSERT INTO `students` (`id`, `student_lrn`, `full_name`, `grade_section`, `email`, `password`) VALUES
+(1, '2026-0001', 'Alex Morgan', 'Grade 11 - STEM', 'alex.morgan@student.edu.ph', '$2y$10$8Q6/91M1b.Z5l6M7N8O9P.qR1S2T3U4V5W6X7Y8Z9A0B1C2D3E4F5'),
+(2, '2026-0002', 'Samantha Cruz', 'Grade 10 - Rizal', 'samantha.cruz@student.edu.ph', '$2y$10$8Q6/91M1b.Z5l6M7N8O9P.qR1S2T3U4V5W6X7Y8Z9A0B1C2D3E4F5');
+
+-- --------------------------------------------------------
+-- Table: feedbacks (Suggestions & Feedbacks from Students - Verified)
 -- --------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `feedbacks` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `org_id` INT NOT NULL,
-  `student_name` VARCHAR(100) DEFAULT 'Anonymous Student',
+  `student_name` VARCHAR(100) NOT NULL,
   `student_email` VARCHAR(100) DEFAULT NULL,
   `student_grade_section` VARCHAR(50) DEFAULT NULL,
   `category` ENUM('Suggestion', 'Complaint', 'Inquiry', 'Appreciation') DEFAULT 'Suggestion',

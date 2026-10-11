@@ -3,26 +3,79 @@
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/auth_check.php';
 
-$org_id = $_SESSION['org_id'];
-$org_name = $_SESSION['org_name'];
-$org_acronym = $_SESSION['org_acronym'];
+$current_role = $_SESSION['user_role'] ?? 'Officer';
+$is_admin = ($current_role === 'Admin');
+$is_pres_or_vp = in_array($current_role, ['President', 'Vice President'], true);
+$can_manage_users = ($is_admin || $is_pres_or_vp);
 
-// Automatically update task statuses to 'Overdue' if deadline has passed and not accomplished
-$pdo->exec("UPDATE tasks SET status = 'Overdue' WHERE org_id = $org_id AND deadline < CURDATE() AND status != 'Accomplished'");
+// Organization scoping
+$selected_org_id = 0;
+if ($is_admin) {
+    $selected_org_id = isset($_GET['org_id']) ? intval($_GET['org_id']) : 0;
+} else {
+    $selected_org_id = intval($_SESSION['org_id']);
+}
 
-// 1. Fetch Task Statistics (Exact structure requested by user)
-$total_tasks = $pdo->query("SELECT COUNT(*) FROM tasks WHERE org_id = $org_id")->fetchColumn();
-$accomplished_tasks = $pdo->query("SELECT COUNT(*) FROM tasks WHERE org_id = $org_id AND status = 'Accomplished'")->fetchColumn();
-$todo_tasks = $pdo->query("SELECT COUNT(*) FROM tasks WHERE org_id = $org_id AND status = 'To Do'")->fetchColumn();
-$in_progress_tasks = $pdo->query("SELECT COUNT(*) FROM tasks WHERE org_id = $org_id AND status = 'In Progress'")->fetchColumn();
-$overdue_tasks = $pdo->query("SELECT COUNT(*) FROM tasks WHERE org_id = $org_id AND status = 'Overdue'")->fetchColumn();
+// Fetch all orgs for Admin filter dropdown
+$all_orgs = [];
+if ($is_admin) {
+    $all_orgs = $pdo->query("SELECT id, name, acronym FROM organizations ORDER BY acronym ASC")->fetchAll();
+}
+
+// Determine active display name / acronym
+if ($selected_org_id > 0) {
+    if ($selected_org_id === intval($_SESSION['org_id'])) {
+        $active_org_name = $_SESSION['org_name'];
+        $active_org_acronym = $_SESSION['org_acronym'];
+    } else {
+        $stmt_org = $pdo->prepare("SELECT name, acronym FROM organizations WHERE id = ?");
+        $stmt_org->execute([$selected_org_id]);
+        $org_data = $stmt_org->fetch();
+        $active_org_name = $org_data['name'] ?? 'Organization';
+        $active_org_acronym = $org_data['acronym'] ?? 'ORG';
+    }
+} else {
+    $active_org_name = 'All Organizations';
+    $active_org_acronym = 'System-wide';
+}
+
+// Automatically update task statuses to 'Overdue'
+if ($selected_org_id > 0) {
+    $pdo->exec("UPDATE tasks SET status = 'Overdue' WHERE org_id = $selected_org_id AND deadline < CURDATE() AND status != 'Accomplished'");
+} else {
+    $pdo->exec("UPDATE tasks SET status = 'Overdue' WHERE deadline < CURDATE() AND status != 'Accomplished'");
+}
+
+// 1. Fetch Task Statistics
+$task_scope_sql = ($selected_org_id > 0) ? "WHERE org_id = $selected_org_id" : "";
+$total_tasks = $pdo->query("SELECT COUNT(*) FROM tasks $task_scope_sql")->fetchColumn();
+$accomplished_tasks = $pdo->query("SELECT COUNT(*) FROM tasks " . ($selected_org_id > 0 ? "WHERE org_id = $selected_org_id AND status = 'Accomplished'" : "WHERE status = 'Accomplished'"))->fetchColumn();
+$todo_tasks = $pdo->query("SELECT COUNT(*) FROM tasks " . ($selected_org_id > 0 ? "WHERE org_id = $selected_org_id AND status = 'To Do'" : "WHERE status = 'To Do'"))->fetchColumn();
+$in_progress_tasks = $pdo->query("SELECT COUNT(*) FROM tasks " . ($selected_org_id > 0 ? "WHERE org_id = $selected_org_id AND status = 'In Progress'" : "WHERE status = 'In Progress'"))->fetchColumn();
+$overdue_tasks = $pdo->query("SELECT COUNT(*) FROM tasks " . ($selected_org_id > 0 ? "WHERE org_id = $selected_org_id AND status = 'Overdue'" : "WHERE status = 'Overdue'"))->fetchColumn();
 
 // 2. Fetch Upcoming Deadlines
-$upcoming_deadlines = $pdo->query("SELECT * FROM tasks WHERE org_id = $org_id AND status != 'Accomplished' ORDER BY deadline ASC LIMIT 5")->fetchAll();
+if ($selected_org_id > 0) {
+    $upcoming_stmt = $pdo->prepare("SELECT t.*, o.acronym FROM tasks t JOIN organizations o ON t.org_id = o.id WHERE t.org_id = ? AND t.status != 'Accomplished' ORDER BY t.deadline ASC LIMIT 6");
+    $upcoming_stmt->execute([$selected_org_id]);
+    $upcoming_deadlines = $upcoming_stmt->fetchAll();
+} else {
+    $upcoming_deadlines = $pdo->query("SELECT t.*, o.acronym FROM tasks t JOIN organizations o ON t.org_id = o.id WHERE t.status != 'Accomplished' ORDER BY t.deadline ASC LIMIT 6")->fetchAll();
+}
 
-// 3. Fetch Recent Student Suggestions/Feedbacks for Monitoring
-$pending_feedbacks = $pdo->query("SELECT * FROM feedbacks WHERE org_id = $org_id ORDER BY created_at DESC LIMIT 4")->fetchAll();
-$unresolved_feedback_count = $pdo->query("SELECT COUNT(*) FROM feedbacks WHERE org_id = $org_id AND status IN ('Pending', 'Under Review')")->fetchColumn();
+// 3. Fetch Recent Student Suggestions/Feedbacks
+if ($selected_org_id > 0) {
+    $fb_stmt = $pdo->prepare("SELECT f.*, o.acronym FROM feedbacks f JOIN organizations o ON f.org_id = o.id WHERE f.org_id = ? ORDER BY f.created_at DESC LIMIT 4");
+    $fb_stmt->execute([$selected_org_id]);
+    $pending_feedbacks = $fb_stmt->fetchAll();
+
+    $fb_cnt_stmt = $pdo->prepare("SELECT COUNT(*) FROM feedbacks WHERE org_id = ? AND status IN ('Pending', 'Under Review')");
+    $fb_cnt_stmt->execute([$selected_org_id]);
+    $unresolved_feedback_count = $fb_cnt_stmt->fetchColumn();
+} else {
+    $pending_feedbacks = $pdo->query("SELECT f.*, o.acronym FROM feedbacks f JOIN organizations o ON f.org_id = o.id ORDER BY f.created_at DESC LIMIT 4")->fetchAll();
+    $unresolved_feedback_count = $pdo->query("SELECT COUNT(*) FROM feedbacks WHERE status IN ('Pending', 'Under Review')")->fetchColumn();
+}
 
 include_once __DIR__ . '/../includes/header.php';
 ?>
@@ -30,24 +83,70 @@ include_once __DIR__ . '/../includes/header.php';
 <!-- Header Greeting & Quick Actions -->
 <div class="page-header">
   <div>
-    <h1 class="page-title"><i class="fa-solid fa-gauge-high" style="color: var(--accent);"></i> <?= htmlspecialchars($org_acronym) ?> Task Organizer & Dashboard</h1>
-    <p class="page-subtitle">Welcome back, <strong><?= htmlspecialchars($_SESSION['user_name']) ?></strong> (<?= htmlspecialchars($_SESSION['user_role']) ?> of <?= htmlspecialchars($org_name) ?>)</p>
+    <h1 class="page-title">
+      <i class="fa-solid fa-gauge-high" style="color: var(--accent);"></i> 
+      <?= htmlspecialchars($active_org_acronym) ?> Leadership Portal & Dashboard
+    </h1>
+    <p class="page-subtitle">
+      <span style="font-size: 0.85rem; color: var(--gray-500); display: block; margin-bottom: 0.2rem;">For authorized officers, advisers, and designated personnel</span>
+      <?php if ($is_admin): ?>
+        Welcome back, <strong><?= htmlspecialchars($_SESSION['user_name']) ?></strong> (System Administrator — <?= $selected_org_id > 0 ? 'Viewing ' . htmlspecialchars($active_org_name) : 'All Organizations' ?>)
+      <?php else: ?>
+        Welcome back, <strong><?= htmlspecialchars($_SESSION['user_name']) ?></strong> (<?= htmlspecialchars($_SESSION['user_role']) ?> of <?= htmlspecialchars($active_org_name) ?>)
+      <?php endif; ?>
+    </p>
   </div>
 
   <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
     <a href="../student/index.php" class="btn btn-secondary" title="View Student Portal View">
       <i class="fa-solid fa-eye"></i> Monitor Student Portal
     </a>
-    <a href="tasks.php?action=new" class="btn btn-primary">
+    <a href="tasks.php?action=new<?= $selected_org_id > 0 ? '&org_id=' . $selected_org_id : '' ?>" class="btn btn-primary">
       <i class="fa-solid fa-plus"></i> Add New Task
     </a>
   </div>
 </div>
 
-<!-- Task Counter Grid (Exact requested UI format) -->
+<?php if (!empty($_GET['error'])): ?>
+  <div class="toast toast-danger alert-auto-dismiss" role="alert">
+    <div class="toast-icon"><i class="fa-solid fa-circle-exclamation"></i></div>
+    <div class="toast-body">
+      <div class="toast-title">Notice</div>
+      <div class="toast-message"><?= htmlspecialchars($_GET['error']) ?></div>
+    </div>
+    <button type="button" class="toast-close" aria-label="Close">&times;</button>
+    <div class="toast-progress"><div class="toast-progress-bar"></div></div>
+  </div>
+<?php endif; ?>
+
+<?php if ($is_admin): ?>
+  <!-- Admin Organization Switcher Bar -->
+  <div class="filter-bar" style="margin-bottom: 1.5rem; background: #faf5ff; border: 1px solid #e9d5ff;">
+    <form method="GET" action="dashboard.php" style="display: flex; gap: 1rem; align-items: center; width: 100%; flex-wrap: wrap;">
+      <div style="font-weight: 700; color: #6b21a8; font-size: 0.9rem; display: flex; align-items: center; gap: 0.5rem;">
+        <i class="fa-solid fa-sliders"></i> Admin Org View:
+      </div>
+      <div style="flex: 1; max-width: 320px;">
+        <select name="org_id" class="form-control" onchange="this.form.submit()">
+          <option value="0" <?= $selected_org_id === 0 ? 'selected' : '' ?>>All Organizations (System-wide Overview)</option>
+          <?php foreach ($all_orgs as $org): ?>
+            <option value="<?= $org['id'] ?>" <?= $selected_org_id == $org['id'] ? 'selected' : '' ?>>
+              <?= htmlspecialchars($org['acronym'] . ' - ' . $org['name']) ?>
+            </option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <?php if ($selected_org_id > 0): ?>
+        <a href="dashboard.php" class="btn btn-secondary btn-sm"><i class="fa-solid fa-rotate-left"></i> View All Organizations</a>
+      <?php endif; ?>
+    </form>
+  </div>
+<?php endif; ?>
+
+<!-- Task Counter Grid -->
 <div class="stats-grid">
   <!-- Total Tasks Card -->
-  <div class="stat-card total" onclick="window.location.href='tasks.php'" style="cursor: pointer;">
+  <div class="stat-card total" onclick="navigateWithLoader('tasks.php<?= $selected_org_id > 0 ? '?org_id=' . $selected_org_id : '' ?>')" style="cursor: pointer;">
     <div class="stat-icon"><i class="fa-solid fa-list-check"></i></div>
     <div>
       <div class="stat-number"><?= $total_tasks ?></div>
@@ -57,7 +156,7 @@ include_once __DIR__ . '/../includes/header.php';
   </div>
 
   <!-- Accomplished Tasks Card -->
-  <div class="stat-card accomplished" onclick="window.location.href='tasks.php?status=Accomplished'" style="cursor: pointer;">
+  <div class="stat-card accomplished" onclick="navigateWithLoader('tasks.php?status=Accomplished<?= $selected_org_id > 0 ? '&org_id=' . $selected_org_id : '' ?>')" style="cursor: pointer;">
     <div class="stat-icon"><i class="fa-solid fa-circle-check"></i></div>
     <div>
       <div class="stat-number"><?= $accomplished_tasks ?></div>
@@ -67,7 +166,7 @@ include_once __DIR__ . '/../includes/header.php';
   </div>
 
   <!-- To Do Tasks Card -->
-  <div class="stat-card todo" onclick="window.location.href='tasks.php?status=To Do'" style="cursor: pointer;">
+  <div class="stat-card todo" onclick="navigateWithLoader('tasks.php?status=To Do<?= $selected_org_id > 0 ? '&org_id=' . $selected_org_id : '' ?>')" style="cursor: pointer;">
     <div class="stat-icon"><i class="fa-solid fa-clock"></i></div>
     <div>
       <div class="stat-number"><?= $todo_tasks ?></div>
@@ -77,7 +176,7 @@ include_once __DIR__ . '/../includes/header.php';
   </div>
 
   <!-- Overdue Tasks Card -->
-  <div class="stat-card overdue" onclick="window.location.href='tasks.php?status=Overdue'" style="cursor: pointer;">
+  <div class="stat-card overdue" onclick="navigateWithLoader('tasks.php?status=Overdue<?= $selected_org_id > 0 ? '&org_id=' . $selected_org_id : '' ?>')" style="cursor: pointer;">
     <div class="stat-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
     <div>
       <div class="stat-number"><?= $overdue_tasks ?></div>
@@ -94,7 +193,7 @@ include_once __DIR__ . '/../includes/header.php';
     <div class="panel">
       <div class="panel-header">
         <span><i class="fa-solid fa-calendar-day" style="color: var(--danger);"></i> Task Deadlines Organizer</span>
-        <a href="tasks.php" style="font-size: 0.85rem;">Manage All Tasks <i class="fa-solid fa-arrow-right"></i></a>
+        <a href="tasks.php<?= $selected_org_id > 0 ? '?org_id=' . $selected_org_id : '' ?>" style="font-size: 0.85rem;">Manage All Tasks <i class="fa-solid fa-arrow-right"></i></a>
       </div>
 
       <?php if (empty($upcoming_deadlines)): ?>
@@ -104,6 +203,8 @@ include_once __DIR__ . '/../includes/header.php';
           <?php foreach ($upcoming_deadlines as $task): 
             $deadline_timestamp = strtotime($task['deadline']);
             $is_overdue = ($task['status'] === 'Overdue') || ($deadline_timestamp < strtotime('today'));
+            $task_status_badges = ['Accomplished' => 'badge-accomplished', 'In Progress' => 'badge-in-progress', 'Overdue' => 'badge-overdue'];
+            $task_badge = $task_status_badges[$task['status']] ?? 'badge-todo';
           ?>
             <li class="deadline-item">
               <div class="deadline-date-badge" style="background: <?= $is_overdue ? 'var(--danger-light)' : 'var(--primary-light)' ?>; color: <?= $is_overdue ? 'var(--danger)' : 'var(--primary)' ?>;">
@@ -112,11 +213,16 @@ include_once __DIR__ . '/../includes/header.php';
               </div>
 
               <div style="flex: 1;">
-                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                   <strong style="color: var(--dark); font-size: 0.95rem;"><?= htmlspecialchars($task['title']) ?></strong>
-                  <span class="badge <?= match($task['status']) { 'Accomplished' => 'badge-accomplished', 'In Progress' => 'badge-in-progress', 'Overdue' => 'badge-overdue', default => 'badge-todo' } ?>">
+                  <span class="badge <?= $task_badge ?>">
                     <?= $task['status'] ?>
                   </span>
+                  <?php if ($selected_org_id === 0 && !empty($task['acronym'])): ?>
+                    <span class="badge badge-planning" style="font-size: 0.7rem; font-weight: 700;">
+                      <?= htmlspecialchars($task['acronym']) ?>
+                    </span>
+                  <?php endif; ?>
                 </div>
                 <div style="font-size: 0.8rem; color: var(--gray-600); margin-top: 0.2rem;">
                   Assigned to: <strong><?= htmlspecialchars($task['assigned_to']) ?></strong> • Priority: <strong><?= $task['priority'] ?></strong>
@@ -139,7 +245,7 @@ include_once __DIR__ . '/../includes/header.php';
             <span class="badge badge-overdue" style="margin-left: 0.5rem;"><?= $unresolved_feedback_count ?> Needs Response</span>
           <?php endif; ?>
         </span>
-        <a href="feedbacks.php" style="font-size: 0.85rem;">View All Feedbacks <i class="fa-solid fa-chevron-right"></i></a>
+        <a href="feedbacks.php<?= $selected_org_id > 0 ? '?org_id=' . $selected_org_id : '' ?>" style="font-size: 0.85rem;">View All Feedbacks <i class="fa-solid fa-chevron-right"></i></a>
       </div>
 
       <p style="font-size: 0.85rem; color: var(--gray-600); margin-bottom: 1rem;">
@@ -147,14 +253,22 @@ include_once __DIR__ . '/../includes/header.php';
       </p>
 
       <?php if (empty($pending_feedbacks)): ?>
-        <p style="color: var(--gray-500); text-align: center; padding: 1.5rem;">No student feedbacks submitted for <?= htmlspecialchars($org_acronym) ?> yet.</p>
+        <p style="color: var(--gray-500); text-align: center; padding: 1.5rem;">No student feedbacks submitted for <?= htmlspecialchars($active_org_acronym) ?> yet.</p>
       <?php else: ?>
         <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-          <?php foreach ($pending_feedbacks as $fb): ?>
+          <?php foreach ($pending_feedbacks as $fb): 
+            $fb_status_badges = ['Resolved' => 'badge-accomplished', 'In Action' => 'badge-in-progress', 'Under Review' => 'badge-todo'];
+            $fb_badge = $fb_status_badges[$fb['status']] ?? 'badge-planning';
+          ?>
             <div style="padding: 0.85rem; background: var(--gray-100); border-radius: var(--radius-sm); border: 1px solid var(--gray-200);">
               <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.4rem;">
-                <strong style="font-size: 0.9rem; color: var(--dark);"><?= htmlspecialchars($fb['subject']) ?></strong>
-                <span class="badge <?= match($fb['status']) { 'Resolved' => 'badge-accomplished', 'In Action' => 'badge-in-progress', 'Under Review' => 'badge-todo', default => 'badge-planning' } ?>">
+                <div>
+                  <strong style="font-size: 0.9rem; color: var(--dark);"><?= htmlspecialchars($fb['subject']) ?></strong>
+                  <?php if ($selected_org_id === 0 && !empty($fb['acronym'])): ?>
+                    <span class="badge badge-planning" style="font-size: 0.65rem; margin-left: 0.25rem;"><?= htmlspecialchars($fb['acronym']) ?></span>
+                  <?php endif; ?>
+                </div>
+                <span class="badge <?= $fb_badge ?>">
                   <?= $fb['status'] ?>
                 </span>
               </div>
@@ -185,12 +299,18 @@ include_once __DIR__ . '/../includes/header.php';
     <div class="panel">
       <div class="panel-header">Quick Leadership Actions</div>
       <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-        <a href="tasks.php" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-list-check" style="color: var(--primary);"></i> Manage Organization Tasks</a>
-        <a href="projects.php" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-diagram-project" style="color: var(--secondary);"></i> Update Project Progress</a>
-        <a href="accomplishments.php" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-trophy" style="color: var(--warning);"></i> Post New Accomplishment</a>
-        <a href="feedbacks.php" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-comments" style="color: var(--accent);"></i> Review Student Suggestions</a>
-        <a href="users.php" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-users-gear" style="color: var(--info);"></i> Manage Officers & User Accounts</a>
-        <a href="organizations.php" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-sitemap" style="color: var(--primary);"></i> Manage Student Organizations</a>
+        <?php if ($is_admin): ?>
+          <a href="organizations.php" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-sitemap" style="color: var(--primary);"></i> Organization Management</a>
+        <?php endif; ?>
+        <a href="projects.php<?= $selected_org_id > 0 ? '?org_id=' . $selected_org_id : '' ?>" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-folder-tree" style="color: var(--secondary);"></i> Programs and Projects Management</a>
+        <a href="tasks.php<?= $selected_org_id > 0 ? '?org_id=' . $selected_org_id : '' ?>" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-list-check" style="color: var(--primary);"></i> Individual Task Assignment and Monitoring</a>
+        <a href="projects.php<?= $selected_org_id > 0 ? '?org_id=' . $selected_org_id : '' ?>" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-chart-line" style="color: #0284c7;"></i> Project Progress Updates</a>
+        <a href="accomplishments.php<?= $selected_org_id > 0 ? '?org_id=' . $selected_org_id : '' ?>" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-trophy" style="color: var(--warning);"></i> Accomplishment and Document Records</a>
+        <a href="feedbacks.php<?= $selected_org_id > 0 ? '?org_id=' . $selected_org_id : '' ?>" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-comments" style="color: var(--accent);"></i> Feedback and Concern Management</a>
+        <a href="reports.php<?= $selected_org_id > 0 ? '?org_id=' . $selected_org_id : '' ?>" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-chart-pie" style="color: #7c3aed;"></i> Leadership Performance Reports</a>
+        <?php if ($can_manage_users): ?>
+          <a href="users.php" class="btn btn-secondary" style="justify-content: flex-start;"><i class="fa-solid fa-users-gear" style="color: var(--info);"></i> User Management (Leaders & Students)</a>
+        <?php endif; ?>
       </div>
     </div>
   </div>

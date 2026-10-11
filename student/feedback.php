@@ -1,18 +1,50 @@
 <?php
 // student/feedback.php - Submit & View Suggestions / Feedbacks
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../includes/student_auth_check.php';
+
+$is_student = isset($_SESSION['student_id']);
+$is_officer = isset($_SESSION['user_id']);
+
+if ($is_student) {
+    $submitter_name = $_SESSION['student_name'];
+    $submitter_grade = $_SESSION['student_grade_section'];
+    $submitter_email = $_SESSION['student_email'] ?? '';
+    $submitter_role_label = 'Student (' . $submitter_grade . ')';
+} elseif ($is_officer) {
+    $submitter_name = $_SESSION['user_name'];
+    $submitter_grade = $_SESSION['user_role'] . ' • ' . $_SESSION['org_acronym'];
+    $submitter_email = $_SESSION['user_email'] ?? '';
+    $submitter_role_label = 'Officer (' . $_SESSION['user_role'] . ' • ' . $_SESSION['org_acronym'] . ')';
+} else {
+    $submitter_name = 'Student';
+    $submitter_grade = '';
+    $submitter_email = '';
+    $submitter_role_label = 'Student';
+}
 
 $success_msg = '';
 $error_msg = '';
 
-// Handle Form Submission
+// Handle Officer Delete Feedback from Student Feed
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_feedback' && $is_officer) {
+    $feedback_id = intval($_POST['feedback_id']);
+    $stmt = $pdo->prepare("DELETE FROM feedbacks WHERE id = ?");
+    if ($stmt->execute([$feedback_id])) {
+        $success_msg = "Feedback removed successfully.";
+    } else {
+        $error_msg = "Failed to remove feedback.";
+    }
+}
+
+// Handle Form Submission (Verified Non-Anonymous)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'submit_feedback') {
     $org_id = intval($_POST['org_id']);
-    $is_anonymous = isset($_POST['is_anonymous']) ? 1 : 0;
     
-    $student_name = $is_anonymous ? 'Anonymous Student' : trim($_POST['student_name']);
-    $student_email = $is_anonymous ? null : trim($_POST['student_email']);
-    $student_grade = $is_anonymous ? null : trim($_POST['student_grade_section']);
+    // Attributed strictly to the verified logged-in account (no anonymity)
+    $student_name = $submitter_name;
+    $student_grade = $submitter_grade;
+    $student_email = !empty($_POST['student_email']) ? trim($_POST['student_email']) : ($submitter_email ?: null);
     
     $category = trim($_POST['category']);
     $subject = trim($_POST['subject']);
@@ -23,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     } else {
         $stmt = $pdo->prepare("INSERT INTO feedbacks (org_id, student_name, student_email, student_grade_section, category, subject, message, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending')");
         if ($stmt->execute([$org_id, $student_name, $student_email, $student_grade, $category, $subject, $message])) {
-            $success_msg = "Thank you! Your suggestion/feedback has been submitted successfully to the organization leaders.";
+            $success_msg = "Thank you! Your feedback has been submitted with your verified name to the organization leaders.";
         } else {
             $error_msg = "Failed to submit feedback. Please try again.";
         }
@@ -41,8 +73,8 @@ $public_feedbacks = $pdo->query("SELECT f.*, o.name as org_name, o.acronym FROM 
 
 <div class="page-header">
   <div>
-    <h1 class="page-title"><i class="fa-solid fa-comment-dots" style="color: var(--accent);"></i> Student Suggestions & Feedbacks</h1>
-    <p class="page-subtitle">Share your ideas, concerns, or appreciation with your student government & organization officers.</p>
+    <h1 class="page-title"><i class="fa-regular fa-comment-dots" style="color: var(--accent);"></i> Feedback, Suggestions, and Concerns</h1>
+    <p class="page-subtitle">Submit feedback and monitor its status or response.</p>
   </div>
 
   <button class="btn btn-primary" data-modal-target="submitFeedbackModal">
@@ -51,14 +83,26 @@ $public_feedbacks = $pdo->query("SELECT f.*, o.name as org_name, o.acronym FROM 
 </div>
 
 <?php if (!empty($success_msg)): ?>
-  <div class="alert alert-success alert-auto-dismiss">
-    <span><i class="fa-solid fa-circle-check"></i> <?= htmlspecialchars($success_msg) ?></span>
+  <div class="toast toast-success alert-auto-dismiss" role="alert">
+    <div class="toast-icon"><i class="fa-solid fa-circle-check"></i></div>
+    <div class="toast-body">
+      <div class="toast-title">Success</div>
+      <div class="toast-message"><?= htmlspecialchars($success_msg) ?></div>
+    </div>
+    <button type="button" class="toast-close" aria-label="Close">&times;</button>
+    <div class="toast-progress"><div class="toast-progress-bar"></div></div>
   </div>
 <?php endif; ?>
 
 <?php if (!empty($error_msg)): ?>
-  <div class="alert alert-danger alert-auto-dismiss">
-    <span><i class="fa-solid fa-triangle-exclamation"></i> <?= htmlspecialchars($error_msg) ?></span>
+  <div class="toast toast-danger alert-auto-dismiss" role="alert">
+    <div class="toast-icon"><i class="fa-solid fa-circle-exclamation"></i></div>
+    <div class="toast-body">
+      <div class="toast-title">Notice</div>
+      <div class="toast-message"><?= htmlspecialchars($error_msg) ?></div>
+    </div>
+    <button type="button" class="toast-close" aria-label="Close">&times;</button>
+    <div class="toast-progress"><div class="toast-progress-bar"></div></div>
   </div>
 <?php endif; ?>
 
@@ -74,12 +118,12 @@ $public_feedbacks = $pdo->query("SELECT f.*, o.name as org_name, o.acronym FROM 
     </div>
   <?php else: ?>
     <?php foreach ($public_feedbacks as $fb): 
-      $status_badge = match($fb['status']) {
+      $fb_status_badges = [
         'Resolved' => 'badge-accomplished',
         'In Action' => 'badge-in-progress',
-        'Under Review' => 'badge-todo',
-        default => 'badge-planning'
-      };
+        'Under Review' => 'badge-todo'
+      ];
+      $status_badge = $fb_status_badges[$fb['status']] ?? 'badge-planning';
     ?>
       <div class="panel">
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
@@ -98,9 +142,22 @@ $public_feedbacks = $pdo->query("SELECT f.*, o.name as org_name, o.acronym FROM 
           "<?= nl2br(htmlspecialchars($fb['message'])) ?>"
         </p>
 
-        <div style="font-size: 0.8rem; color: var(--gray-500); margin-bottom: 0.5rem;">
-          Submitted by: <strong><?= htmlspecialchars($fb['student_name']) ?></strong> 
-          <?= $fb['student_grade_section'] ? '(' . htmlspecialchars($fb['student_grade_section']) . ')' : '' ?>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+          <div style="font-size: 0.8rem; color: var(--gray-600);">
+            <i class="fa-solid fa-user-check" style="color: var(--primary);"></i> Submitted by: <strong><?= htmlspecialchars($fb['student_name']) ?></strong> 
+            <?= $fb['student_grade_section'] ? '(' . htmlspecialchars($fb['student_grade_section']) . ')' : '' ?>
+          </div>
+
+          <?php if ($is_officer): ?>
+            <!-- Officer moderation control directly on student feed -->
+            <form method="POST" action="feedback.php" onsubmit="return confirm('Delete this feedback submission?');" style="margin: 0;">
+              <input type="hidden" name="action" value="delete_feedback">
+              <input type="hidden" name="feedback_id" value="<?= $fb['id'] ?>">
+              <button type="submit" class="btn btn-danger btn-sm" style="padding: 0.2rem 0.6rem; font-size: 0.75rem;" title="Delete this feedback as Officer">
+                <i class="fa-solid fa-trash"></i> Delete
+              </button>
+            </form>
+          <?php endif; ?>
         </div>
 
         <!-- Officer Response Box -->
@@ -160,27 +217,20 @@ $public_feedbacks = $pdo->query("SELECT f.*, o.name as org_name, o.acronym FROM 
           <textarea name="message" class="form-control" rows="4" placeholder="Explain your feedback or suggestion clearly..." required></textarea>
         </div>
 
-        <div style="background: var(--gray-100); padding: 1rem; border-radius: var(--radius-sm); margin-top: 1rem;">
-          <div class="form-group" style="margin-bottom: 0.5rem;">
-            <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 700; font-size: 0.9rem; cursor: pointer; color: var(--dark);">
-              <input type="checkbox" name="is_anonymous" id="is_anonymous" onchange="toggleStudentInfo(this.checked)">
-              Submit Anonymously (Hide my name & details)
-            </label>
+        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: var(--radius-sm); padding: 0.85rem 1rem; margin-top: 1rem;">
+          <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
+            <i class="fa-solid fa-circle-check" style="color: #16a34a; font-size: 1rem;"></i>
+            <strong style="color: #166534; font-size: 0.9rem;">Verified Submission Identity</strong>
           </div>
-
-          <div id="student_info_fields" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-top: 0.75rem;">
-            <div>
-              <label class="form-label" style="font-size: 0.8rem;">Your Name</label>
-              <input type="text" name="student_name" class="form-control" placeholder="e.g. Maria Santos">
-            </div>
-            <div>
-              <label class="form-label" style="font-size: 0.8rem;">Grade & Section</label>
-              <input type="text" name="student_grade_section" class="form-control" placeholder="e.g. Grade 11 - STEM">
-            </div>
-            <div style="grid-column: 1 / -1;">
-              <label class="form-label" style="font-size: 0.8rem;">Email Address (Optional)</label>
-              <input type="email" name="student_email" class="form-control" placeholder="student@school.edu.ph">
-            </div>
+          <p style="font-size: 0.8rem; color: #15803d; margin: 0 0 0.5rem 0;">
+            Anonymous feedback is disabled. Your verified identity will be recorded with this feedback:
+          </p>
+          <div style="background: #ffffff; border: 1px solid #dcfce7; border-radius: 6px; padding: 0.6rem 0.85rem; font-size: 0.85rem; color: var(--dark); display: flex; flex-direction: column; gap: 0.2rem;">
+            <div><strong>Posting Name:</strong> <?= htmlspecialchars($submitter_name) ?></div>
+            <div><strong>Identity:</strong> <?= htmlspecialchars($submitter_role_label) ?></div>
+            <?php if (!empty($submitter_email)): ?>
+              <div><strong>Email:</strong> <?= htmlspecialchars($submitter_email) ?></div>
+            <?php endif; ?>
           </div>
         </div>
       </div>
@@ -192,18 +242,5 @@ $public_feedbacks = $pdo->query("SELECT f.*, o.name as org_name, o.acronym FROM 
     </form>
   </div>
 </div>
-
-<script>
-function toggleStudentInfo(isAnon) {
-  const fields = document.getElementById('student_info_fields');
-  if (isAnon) {
-    fields.style.opacity = '0.4';
-    fields.style.pointerEvents = 'none';
-  } else {
-    fields.style.opacity = '1';
-    fields.style.pointerEvents = 'auto';
-  }
-}
-</script>
 
 <?php include_once __DIR__ . '/../includes/footer.php'; ?>

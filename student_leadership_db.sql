@@ -47,7 +47,7 @@ CREATE TABLE `accomplishments` (
 CREATE TABLE `feedbacks` (
   `id` int(11) NOT NULL,
   `org_id` int(11) NOT NULL,
-  `student_name` varchar(100) DEFAULT 'Anonymous Student',
+  `student_name` varchar(100) NOT NULL,
   `student_email` varchar(100) DEFAULT NULL,
   `student_grade_section` varchar(50) DEFAULT NULL,
   `category` enum('Suggestion','Complaint','Inquiry','Appreciation') DEFAULT 'Suggestion',
@@ -153,6 +153,43 @@ INSERT INTO `users` (`id`, `org_id`, `full_name`, `username`, `email`, `password
 (1, 1, 'Maria Santos', 'sslg_leader', 'president@sslg.edu.ph', '$2y$10$4nJ.i4wlhb/g9xR8fQ1h4.sY1Z2dC54qB6G7V8W9X0Y1Z2dC54qB6', 'President', '2026-10-09 08:35:45'),
 (2, 1, 'Juan Dela Cruz', 'sslg_officer', 'officer@sslg.edu.ph', '$2y$10$8Q6/91M1b.Z5l6M7N8O9P.qR1S2T3U4V5W6X7Y8Z9A0B1C2D3E4F5', 'Secretary', '2026-10-09 08:35:45'),
 (3, 2, 'Angela Reyes', 'yeso_leader', 'yeso@school.edu.ph', '$2y$10$8Q6/91M1b.Z5l6M7N8O9P.qR1S2T3U4V5W6X7Y8Z9A0B1C2D3E4F5', 'President', '2026-10-09 08:35:45');
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `students`
+--
+
+CREATE TABLE `students` (
+  `id` int(11) NOT NULL,
+  `student_lrn` varchar(50) NOT NULL,
+  `full_name` varchar(100) NOT NULL,
+  `grade_section` varchar(50) NOT NULL,
+  `email` varchar(100) DEFAULT NULL,
+  `password` varchar(255) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+--
+-- Dumping data for table `students`
+--
+
+INSERT INTO `students` (`id`, `student_lrn`, `full_name`, `grade_section`, `email`, `password`, `created_at`) VALUES
+(1, '2026-0001', 'Alex Morgan', 'Grade 11 - STEM', 'alex.morgan@student.edu.ph', '$2y$10$8Q6/91M1b.Z5l6M7N8O9P.qR1S2T3U4V5W6X7Y8Z9A0B1C2D3E4F5', '2026-10-11 03:00:00'),
+(2, '2026-0002', 'Samantha Cruz', 'Grade 10 - Rizal', 'samantha.cruz@student.edu.ph', '$2y$10$8Q6/91M1b.Z5l6M7N8O9P.qR1S2T3U4V5W6X7Y8Z9A0B1C2D3E4F5', '2026-10-11 03:00:00');
+
+--
+-- Indexes for table `students`
+--
+ALTER TABLE `students`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `student_lrn` (`student_lrn`);
+
+--
+-- AUTO_INCREMENT for table `students`
+--
+ALTER TABLE `students`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- Indexes for dumped tables

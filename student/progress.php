@@ -1,6 +1,7 @@
 <?php
 // student/progress.php - Student View Progress Tracker
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../includes/student_auth_check.php';
 include_once __DIR__ . '/../includes/header.php';
 
 $selected_org_id = isset($_GET['org_id']) ? intval($_GET['org_id']) : 0;
@@ -17,8 +18,8 @@ $projects = $pdo->query($query)->fetchAll();
 
 <div class="page-header">
   <div>
-    <h1 class="page-title"><i class="fa-solid fa-chart-pie" style="color: var(--secondary);"></i> Program & Project Progress</h1>
-    <p class="page-subtitle">Track real-time progress percentages and status updates of ongoing student leadership initiatives.</p>
+    <h1 class="page-title"><i class="fa-solid fa-chart-line" style="color: var(--secondary);"></i> Progress</h1>
+    <p class="page-subtitle">Overall project progress, milestones, and current status.</p>
   </div>
 
   <div>
@@ -44,12 +45,12 @@ $projects = $pdo->query($query)->fetchAll();
     </div>
   <?php else: ?>
     <?php foreach ($projects as $proj): 
-      $status_class = match($proj['status']) {
+      $proj_status_badges = [
         'Accomplished' => 'badge-accomplished',
         'Ongoing' => 'badge-in-progress',
-        'Planning' => 'badge-todo',
-        default => 'badge-planning'
-      };
+        'Planning' => 'badge-todo'
+      ];
+      $status_class = $proj_status_badges[$proj['status']] ?? 'badge-planning';
     ?>
       <div class="card">
         <div class="card-header">

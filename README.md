@@ -1,4 +1,4 @@
-# Student Leadership Management System
+# Hear2Lead - Student Leadership System
 
 A complete Native PHP, HTML, CSS, JavaScript, and MySQL application for school student leadership organizations (e.g., SSLG, YES-O, CSS).
 
@@ -43,7 +43,7 @@ Accessible strictly by organization officers (e.g., SSLG, YES-O, CSS officers) t
 
 1. Ensure **XAMPP Apache & MySQL** services are running.
 2. Place the project folder in `htdocs`:
-   `d:\xampp_8_2_12\htdocs\StudentLeadership`
+   `d:\xampp_8_2_12\htdocs\Hear2Lead`
 3. Open your web browser and navigate to:
-   `http://localhost/StudentLeadership/`
+   `http://localhost/Hear2Lead/`
 4. The system **auto-initializes** the MySQL database `student_leadership_db` and seeds tables automatically upon first visit! *(Optional: You can also manually import `database.sql` into phpMyAdmin if desired).*
