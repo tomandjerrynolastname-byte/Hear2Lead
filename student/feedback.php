@@ -6,6 +6,8 @@ require_once __DIR__ . '/../includes/student_auth_check.php';
 $is_student = isset($_SESSION['student_id']);
 $is_officer = isset($_SESSION['user_id']);
 
+$logged_student_id = $is_student ? intval($_SESSION['student_id']) : null;
+
 if ($is_student) {
     $submitter_name = $_SESSION['student_name'];
     $submitter_grade = $_SESSION['student_grade_section'];
@@ -26,17 +28,6 @@ if ($is_student) {
 $success_msg = '';
 $error_msg = '';
 
-// Handle Officer Delete Feedback from Student Feed
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_feedback' && $is_officer) {
-    $feedback_id = intval($_POST['feedback_id']);
-    $stmt = $pdo->prepare("DELETE FROM feedbacks WHERE id = ?");
-    if ($stmt->execute([$feedback_id])) {
-        $success_msg = "Feedback removed successfully.";
-    } else {
-        $error_msg = "Failed to remove feedback.";
-    }
-}
-
 // Handle Form Submission (Verified Non-Anonymous)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'submit_feedback') {
     $org_id = intval($_POST['org_id']);
@@ -53,28 +44,131 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     if (empty($org_id) || empty($subject) || empty($message)) {
         $error_msg = "Please fill in all required fields (Organization, Subject, Message).";
     } else {
-        $stmt = $pdo->prepare("INSERT INTO feedbacks (org_id, student_name, student_email, student_grade_section, category, subject, message, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending')");
-        if ($stmt->execute([$org_id, $student_name, $student_email, $student_grade, $category, $subject, $message])) {
-            $success_msg = "Thank you! Your feedback has been submitted with your verified name to the organization leaders.";
+        $stmt = $pdo->prepare("INSERT INTO feedbacks (org_id, student_id, student_name, student_email, student_grade_section, category, subject, message, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending')");
+        if ($stmt->execute([$org_id, $logged_student_id, $student_name, $student_email, $student_grade, $category, $subject, $message])) {
+            $success_msg = "Thank you! Your feedback has been submitted to the organization leaders.";
         } else {
             $error_msg = "Failed to submit feedback. Please try again.";
         }
     }
 }
 
+// Handle Student Reply on Organization Reply
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'student_reply') {
+    $feedback_id = intval($_POST['feedback_id'] ?? 0);
+    $reply_message = trim($_POST['reply_message'] ?? '');
+
+    if ($feedback_id <= 0 || empty($reply_message)) {
+        $error_msg = "Please write a reply message before sending.";
+    } else {
+        // Verify this feedback belongs to the logged-in student
+        if ($is_student) {
+            $check_stmt = $pdo->prepare("SELECT id, status FROM feedbacks WHERE id = ? AND (student_id = ? OR (student_id IS NULL AND student_name = ?))");
+            $check_stmt->execute([$feedback_id, $logged_student_id, $submitter_name]);
+        } else {
+            $check_stmt = $pdo->prepare("SELECT id, status FROM feedbacks WHERE id = ? AND student_name = ?");
+            $check_stmt->execute([$feedback_id, $submitter_name]);
+        }
+        $owned_fb = $check_stmt->fetch();
+
+        if (!$owned_fb) {
+            $error_msg = "Unauthorized: You can only reply to your own feedback submissions.";
+        } else {
+            $student_role_tag = !empty($submitter_grade) ? ('Student • ' . $submitter_grade) : 'Student';
+            $ins_reply = $pdo->prepare("INSERT INTO feedback_logs (feedback_id, user_id, officer_name, officer_role, status, reply_message) VALUES (?, ?, ?, ?, 'Student Reply', ?)");
+            if ($ins_reply->execute([$feedback_id, $logged_student_id, $submitter_name, $student_role_tag, $reply_message])) {
+                $success_msg = "Your reply has been sent to the organization and added to the conversation log!";
+            } else {
+                $error_msg = "Failed to send reply. Please try again.";
+            }
+        }
+    }
+}
+
 include_once __DIR__ . '/../includes/header.php';
 
-// Fetch organizations for form
+// Fetch organizations for form & filter
 $orgs = $pdo->query("SELECT * FROM organizations ORDER BY name ASC")->fetchAll();
 
-// Fetch public feedbacks with responses
-$public_feedbacks = $pdo->query("SELECT f.*, o.name as org_name, o.acronym FROM feedbacks f JOIN organizations o ON f.org_id = o.id ORDER BY f.created_at DESC")->fetchAll();
+// Filter parameters (Organization, Status, Calendar Date / Date Range)
+$filter_org = isset($_GET['org_id']) ? intval($_GET['org_id']) : 0;
+$filter_status = trim($_GET['status'] ?? '');
+$filter_date = trim($_GET['filter_date'] ?? '');
+$date_from = trim($_GET['date_from'] ?? '');
+$date_to = trim($_GET['date_to'] ?? '');
+
+// Fetch all dates of the logged-in student's feedbacks for the interactive Calendar dots
+if ($is_student) {
+    $stmt_dates = $pdo->prepare("SELECT DISTINCT DATE(created_at) as fb_date FROM feedbacks WHERE student_id = ? OR (student_id IS NULL AND student_name = ?)");
+    $stmt_dates->execute([$logged_student_id, $submitter_name]);
+} else {
+    $stmt_dates = $pdo->prepare("SELECT DISTINCT DATE(created_at) as fb_date FROM feedbacks WHERE student_name = ?");
+    $stmt_dates->execute([$submitter_name]);
+}
+$feedback_dates = array_values(array_filter(array_column($stmt_dates->fetchAll(), 'fb_date')));
+
+// Build query for ONLY the logged-in student's own feedbacks
+$where_clauses = [];
+$params = [];
+
+if ($is_student) {
+    $where_clauses[] = "(f.student_id = ? OR (f.student_id IS NULL AND f.student_name = ?))";
+    $params[] = $logged_student_id;
+    $params[] = $submitter_name;
+} else {
+    $where_clauses[] = "f.student_name = ?";
+    $params[] = $submitter_name;
+}
+
+if ($filter_org > 0) {
+    $where_clauses[] = "f.org_id = ?";
+    $params[] = $filter_org;
+}
+if (!empty($filter_status)) {
+    $where_clauses[] = "f.status = ?";
+    $params[] = $filter_status;
+}
+if (!empty($filter_date)) {
+    $where_clauses[] = "DATE(f.created_at) = ?";
+    $params[] = $filter_date;
+}
+if (!empty($date_from)) {
+    $where_clauses[] = "DATE(f.created_at) >= ?";
+    $params[] = $date_from;
+}
+if (!empty($date_to)) {
+    $where_clauses[] = "DATE(f.created_at) <= ?";
+    $params[] = $date_to;
+}
+
+$where_sql = implode(" AND ", $where_clauses);
+$stmt_fb = $pdo->prepare("SELECT f.*, o.name as org_name, o.acronym 
+                          FROM feedbacks f 
+                          JOIN organizations o ON f.org_id = o.id 
+                          WHERE $where_sql
+                          ORDER BY f.created_at DESC");
+$stmt_fb->execute($params);
+$my_feedbacks = $stmt_fb->fetchAll();
+
+// Fetch all reply logs for the student's feedbacks
+$feedback_logs_by_id = [];
+if (!empty($my_feedbacks)) {
+    $fb_ids = array_map(function($f) { return intval($f['id']); }, $my_feedbacks);
+    $placeholders = implode(',', array_fill(0, count($fb_ids), '?'));
+    $stmt_logs = $pdo->prepare("SELECT * FROM feedback_logs WHERE feedback_id IN ($placeholders) ORDER BY created_at ASC, id ASC");
+    $stmt_logs->execute($fb_ids);
+    foreach ($stmt_logs->fetchAll() as $log) {
+        $fid = intval($log['feedback_id']);
+        $log['formatted_time'] = date('M d, Y • g:i:s A', strtotime($log['created_at']));
+        $feedback_logs_by_id[$fid][] = $log;
+    }
+}
 ?>
 
 <div class="page-header">
   <div>
-    <h1 class="page-title"><i class="fa-regular fa-comment-dots" style="color: var(--accent);"></i> Feedback, Suggestions, and Concerns</h1>
-    <p class="page-subtitle">Submit feedback and monitor its status or response.</p>
+    <h1 class="page-title"><i class="fa-regular fa-comment-dots" style="color: var(--accent);"></i> My Feedback, Suggestions, and Concerns</h1>
+    <p class="page-subtitle">Submit feedback to student organizations, filter by calendar date, and reply directly to organization responses.</p>
   </div>
 
   <button class="btn btn-primary" data-modal-target="submitFeedbackModal">
@@ -106,24 +200,93 @@ $public_feedbacks = $pdo->query("SELECT f.*, o.name as org_name, o.acronym FROM 
   </div>
 <?php endif; ?>
 
-<!-- Submitted Feedbacks & Responses Feed -->
+<!-- Filter Bar with Calendar & Date Filter -->
+<div class="filter-bar">
+  <form method="GET" action="feedback.php" id="studentFeedbackFilterForm" style="display: flex; gap: 0.85rem; align-items: center; width: 100%; flex-wrap: wrap;">
+    <div class="filter-group">
+      <label class="form-label" style="margin: 0;">Organization:</label>
+      <select name="org_id" class="form-control" style="width: auto;" onchange="this.form.submit()">
+        <option value="0">All Organizations</option>
+        <?php foreach ($orgs as $o): ?>
+          <option value="<?= $o['id'] ?>" <?= $filter_org == $o['id'] ? 'selected' : '' ?>>
+            <?= htmlspecialchars($o['acronym']) ?>
+          </option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label class="form-label" style="margin: 0;">Status:</label>
+      <select name="status" class="form-control" style="width: auto;" onchange="this.form.submit()">
+        <option value="">All Status</option>
+        <option value="Pending" <?= $filter_status === 'Pending' ? 'selected' : '' ?>>Pending</option>
+        <option value="Under Review" <?= $filter_status === 'Under Review' ? 'selected' : '' ?>>Under Review</option>
+        <option value="In Action" <?= $filter_status === 'In Action' ? 'selected' : '' ?>>In Action</option>
+        <option value="Resolved" <?= $filter_status === 'Resolved' ? 'selected' : '' ?>>Resolved</option>
+      </select>
+    </div>
+
+    <!-- Interactive Calendar Widget + Date Inputs -->
+    <div class="filter-group">
+      <div class="calendar-dropdown-wrapper" id="studentCalWrapper">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="toggleFeedbackCalendar('studentCalendarPopover', event)" style="display: inline-flex; align-items: center; gap: 0.4rem;">
+          <i class="fa-regular fa-calendar-days" style="color: var(--primary);"></i>
+          <span><?= !empty($filter_date) ? date('M d, Y', strtotime($filter_date)) : 'Calendar' ?></span>
+          <i class="fa-solid fa-chevron-down" style="font-size: 0.7rem;"></i>
+        </button>
+        <div class="calendar-popover" id="studentCalendarPopover" onclick="event.stopPropagation()">
+          <div class="cal-header">
+            <button type="button" class="cal-nav-btn" onclick="changeCalMonth(-1)"><i class="fa-solid fa-chevron-left"></i></button>
+            <div class="cal-month-title" id="studentCalMonthTitle"></div>
+            <button type="button" class="cal-nav-btn" onclick="changeCalMonth(1)"><i class="fa-solid fa-chevron-right"></i></button>
+          </div>
+          <div class="cal-grid" id="studentCalGrid"></div>
+          <div style="margin-top: 0.65rem; padding-top: 0.5rem; border-top: 1px solid var(--gray-200); display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; color: var(--gray-500);">
+            <span><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--primary);margin-right:4px;"></span>Has Feedback</span>
+            <button type="button" class="btn btn-secondary btn-sm" style="padding: 0.15rem 0.5rem; font-size: 0.72rem;" onclick="selectCalendarDate('')">All Dates</button>
+          </div>
+        </div>
+      </div>
+      <input type="hidden" name="filter_date" id="filter_date_input" value="<?= htmlspecialchars($filter_date) ?>">
+    </div>
+
+    <div class="filter-group">
+      <label class="form-label" style="margin: 0; font-size: 0.82rem;"><i class="fa-regular fa-calendar"></i> From:</label>
+      <input type="date" name="date_from" value="<?= htmlspecialchars($date_from) ?>" class="form-control" style="width: auto; padding: 0.45rem 0.65rem;" onchange="document.getElementById('filter_date_input').value=''; this.form.submit();">
+      <label class="form-label" style="margin: 0; font-size: 0.82rem;">To:</label>
+      <input type="date" name="date_to" value="<?= htmlspecialchars($date_to) ?>" class="form-control" style="width: auto; padding: 0.45rem 0.65rem;" onchange="document.getElementById('filter_date_input').value=''; this.form.submit();">
+    </div>
+
+    <?php if ($filter_org > 0 || !empty($filter_status) || !empty($filter_date) || !empty($date_from) || !empty($date_to)): ?>
+      <a href="feedback.php" class="btn btn-secondary btn-sm"><i class="fa-solid fa-rotate-left"></i> Reset Filter</a>
+    <?php endif; ?>
+  </form>
+</div>
+
+<!-- Submitted Feedbacks & Responses Feed (Strictly Logged-In Student's Own Feedbacks) -->
 <div class="panel-header">
-  <span><i class="fa-solid fa-comments"></i> Recent Feedback & Leadership Actions</span>
+  <span><i class="fa-solid fa-comments"></i> My Submitted Feedbacks & Conversation Logs</span>
+  <span style="font-size: 0.8rem; color: var(--gray-500);"><i class="fa-solid fa-lock"></i> Private to your account (<?= htmlspecialchars($submitter_name) ?>)</span>
 </div>
 
 <div style="display: flex; flex-direction: column; gap: 1.25rem;">
-  <?php if (empty($public_feedbacks)): ?>
+  <?php if (empty($my_feedbacks)): ?>
     <div class="panel" style="text-align: center; padding: 2.5rem; color: var(--gray-500);">
-      No feedback submissions recorded yet. Be the first to submit a suggestion!
+      No feedback submissions found matching your current filter criteria.
     </div>
   <?php else: ?>
-    <?php foreach ($public_feedbacks as $fb): 
+    <?php foreach ($my_feedbacks as $fb): 
       $fb_status_badges = [
         'Resolved' => 'badge-accomplished',
         'In Action' => 'badge-in-progress',
-        'Under Review' => 'badge-todo'
+        'Under Review' => 'badge-todo',
+        'Student Reply' => 'badge-student-reply'
       ];
       $status_badge = $fb_status_badges[$fb['status']] ?? 'badge-planning';
+      $fb_logs = $feedback_logs_by_id[intval($fb['id'])] ?? [];
+      $initial_limit = 1; // Show 1 log initially, with Show More / Show Less when > 1
+      $total_logs = count($fb_logs);
+      $hidden_count = max(0, $total_logs - $initial_limit);
     ?>
       <div class="panel">
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
@@ -134,7 +297,7 @@ $public_feedbacks = $pdo->query("SELECT f.*, o.name as org_name, o.acronym FROM 
             <h3 style="font-size: 1.15rem; color: var(--dark); margin-top: 0.4rem;"><?= htmlspecialchars($fb['subject']) ?></h3>
           </div>
           <span style="font-size: 0.8rem; color: var(--gray-500); font-weight: 500;">
-            <i class="fa-regular fa-clock"></i> <?= date('M d, Y', strtotime($fb['created_at'])) ?>
+            <i class="fa-regular fa-clock"></i> <?= date('M d, Y • g:i A', strtotime($fb['created_at'])) ?>
           </span>
         </div>
 
@@ -148,26 +311,84 @@ $public_feedbacks = $pdo->query("SELECT f.*, o.name as org_name, o.acronym FROM 
             <?= $fb['student_grade_section'] ? '(' . htmlspecialchars($fb['student_grade_section']) . ')' : '' ?>
           </div>
 
-          <?php if ($is_officer): ?>
-            <!-- Officer moderation control directly on student feed -->
-            <form method="POST" action="feedback.php" onsubmit="return confirm('Delete this feedback submission?');" style="margin: 0;">
-              <input type="hidden" name="action" value="delete_feedback">
-              <input type="hidden" name="feedback_id" value="<?= $fb['id'] ?>">
-              <button type="submit" class="btn btn-danger btn-sm" style="padding: 0.2rem 0.6rem; font-size: 0.75rem;" title="Delete this feedback as Officer">
-                <i class="fa-solid fa-trash"></i> Delete
-              </button>
-            </form>
+          <?php if (!empty($fb_logs)): ?>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="toggleStudentReplyBox(<?= intval($fb['id']) ?>)">
+              <i class="fa-solid fa-reply" style="color: var(--primary);"></i> Reply to <?= htmlspecialchars($fb['acronym']) ?>
+            </button>
           <?php endif; ?>
         </div>
 
-        <!-- Officer Response Box -->
-        <?php if (!empty($fb['officer_response'])): ?>
-          <div style="margin-top: 1rem; padding: 0.85rem 1.15rem; background: var(--primary-light); border-left: 4px solid var(--primary); border-radius: var(--radius-sm);">
-            <div style="font-weight: 700; color: var(--primary-hover); font-size: 0.85rem; margin-bottom: 0.25rem; display: flex; justify-content: space-between;">
-              <span><i class="fa-solid fa-reply"></i> Response from <?= htmlspecialchars($fb['acronym']) ?> Leaders:</span>
-              <span style="font-weight: 500; font-size: 0.75rem; color: var(--gray-600);"><?= date('M d, Y g:i A', strtotime($fb['responded_at'])) ?></span>
+        <!-- Officer & Student Reply Logs Timeline (Vertical Left-Aligned Stepper Style with Show More / Show Less) -->
+        <?php if (!empty($fb_logs)): ?>
+          <div class="log-stepper-container" style="margin-top: 1.1rem; padding-top: 0.9rem; border-top: 1px dashed var(--gray-300);">
+            <div style="font-size: 0.78rem; font-weight: 700; color: var(--gray-600); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.65rem;">
+              <i class="fa-solid fa-diagram-next" style="color: var(--primary);"></i> Conversation & Reply Logs (<?= $total_logs ?>)
             </div>
-            <p style="font-size: 0.9rem; color: var(--gray-800); font-style: italic;"><?= nl2br(htmlspecialchars($fb['officer_response'])) ?></p>
+            <div class="log-stepper" data-initial-limit="<?= $initial_limit ?>">
+              <?php foreach ($fb_logs as $idx => $log): 
+                $is_student_reply = ($log['status'] === 'Student Reply' || stripos($log['officer_role'], 'Student') !== false);
+                $log_status_badge = $is_student_reply ? 'badge-student-reply' : ($fb_status_badges[$log['status']] ?? 'badge-planning');
+                $step_color_class = $is_student_reply
+                  ? 'step-student'
+                  : (($log['status'] === 'Resolved') ? 'step-success' : (($log['status'] === 'In Action') ? 'step-info' : (($log['status'] === 'Under Review') ? 'step-warning' : '')));
+                $hidden_class = ($idx >= $initial_limit) ? 'log-step-hidden' : '';
+                $last_visible_class = ($idx === $initial_limit - 1 && $total_logs > $initial_limit) ? 'log-step-last-visible' : '';
+              ?>
+                <div class="log-step <?= $step_color_class ?> <?= $hidden_class ?> <?= $last_visible_class ?>">
+                  <div class="log-step-node" title="Step <?= $idx + 1 ?>">
+                    <?= $idx + 1 ?>
+                  </div>
+                  <div class="log-step-content">
+                    <div class="log-step-header">
+                      <div class="log-step-title">
+                        <?php if ($is_student_reply): ?>
+                          <i class="fa-solid fa-user-graduate" style="color: #6d28d9;"></i>
+                        <?php else: ?>
+                          <i class="fa-solid fa-user-shield" style="color: var(--primary);"></i>
+                        <?php endif; ?>
+                        <span><?= htmlspecialchars($log['officer_name']) ?></span>
+                        <span class="log-step-role">(<?= htmlspecialchars($log['officer_role']) ?>)</span>
+                        <span class="badge <?= $log_status_badge ?>" style="font-size: 0.68rem;">
+                          <?= htmlspecialchars($is_student_reply ? 'Student Reply' : $log['status']) ?>
+                        </span>
+                      </div>
+                      <div class="log-step-time">
+                        <i class="fa-regular fa-clock"></i> <?= htmlspecialchars($log['formatted_time']) ?>
+                      </div>
+                    </div>
+                    <div class="log-step-body"><?= nl2br(htmlspecialchars($log['reply_message'])) ?></div>
+                  </div>
+                </div>
+              <?php endforeach; ?>
+            </div>
+
+            <?php if ($hidden_count > 0): ?>
+              <div class="log-stepper-toggle-wrap">
+                <button type="button" class="log-stepper-toggle-btn" data-expanded="false" onclick="toggleStepperLogs(this)">
+                  <i class="fa-solid fa-chevron-down"></i> Show More (<?= $hidden_count ?> more <?= $hidden_count === 1 ? 'log' : 'logs' ?>)
+                </button>
+              </div>
+            <?php endif; ?>
+
+            <!-- Collapsible Student Reply Form to reply to the organization's response -->
+            <div id="studentReplyBox_<?= intval($fb['id']) ?>" style="display: none; margin-top: 0.9rem; background: #f8fafc; border: 1px solid var(--gray-200); border-radius: var(--radius-sm); padding: 0.9rem;">
+              <form method="POST" action="feedback.php">
+                <input type="hidden" name="action" value="student_reply">
+                <input type="hidden" name="feedback_id" value="<?= intval($fb['id']) ?>">
+                <label class="form-label" style="font-size: 0.82rem; margin-bottom: 0.35rem;">
+                  <i class="fa-solid fa-reply" style="color: #6d28d9;"></i> Write Your Reply to <?= htmlspecialchars($fb['acronym']) ?> Leaders
+                </label>
+                <textarea name="reply_message" class="form-control" rows="2" placeholder="Write a follow-up message or reply to the organization's response..." required style="min-height: 68px; margin-bottom: 0.6rem;"></textarea>
+                <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="toggleStudentReplyBox(<?= intval($fb['id']) ?>)">Cancel</button>
+                  <button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-paper-plane"></i> Send Reply</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        <?php else: ?>
+          <div style="margin-top: 0.75rem; font-size: 0.82rem; color: var(--gray-500); font-style: italic;">
+            <i class="fa-regular fa-hourglass-half"></i> Awaiting response from <?= htmlspecialchars($fb['acronym']) ?> leaders.
           </div>
         <?php endif; ?>
       </div>
@@ -243,4 +464,94 @@ $public_feedbacks = $pdo->query("SELECT f.*, o.name as org_name, o.acronym FROM 
   </div>
 </div>
 
+<script>
+const STUDENT_FB_DATES = <?= json_encode($feedback_dates) ?>;
+const SELECTED_FB_DATE = <?= json_encode($filter_date) ?>;
+let currentCalDate = SELECTED_FB_DATE ? new Date(SELECTED_FB_DATE + 'T00:00:00') : new Date();
+if (isNaN(currentCalDate.getTime())) currentCalDate = new Date();
+
+function toggleStudentReplyBox(fbId) {
+  const box = document.getElementById('studentReplyBox_' + fbId);
+  if (!box) return;
+  const isHidden = box.style.display === 'none' || box.style.display === '';
+  box.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) {
+    const textarea = box.querySelector('textarea');
+    if (textarea) textarea.focus();
+  }
+}
+
+function toggleFeedbackCalendar(popoverId, event) {
+  event.stopPropagation();
+  const pop = document.getElementById(popoverId);
+  if (!pop) return;
+  pop.classList.toggle('active');
+  if (pop.classList.contains('active')) {
+    renderMiniCalendar();
+  }
+}
+
+document.addEventListener('click', (e) => {
+  const pop = document.getElementById('studentCalendarPopover');
+  if (pop && !pop.contains(e.target)) {
+    pop.classList.remove('active');
+  }
+});
+
+function changeCalMonth(delta) {
+  currentCalDate.setMonth(currentCalDate.getMonth() + delta);
+  renderMiniCalendar();
+}
+
+function selectCalendarDate(dateStr) {
+  const input = document.getElementById('filter_date_input');
+  const form = document.getElementById('studentFeedbackFilterForm');
+  if (input && form) {
+    input.value = dateStr;
+    const fromIn = form.querySelector('input[name="date_from"]');
+    const toIn = form.querySelector('input[name="date_to"]');
+    if (fromIn) fromIn.value = '';
+    if (toIn) toIn.value = '';
+    form.submit();
+  }
+}
+
+function renderMiniCalendar() {
+  const titleEl = document.getElementById('studentCalMonthTitle');
+  const gridEl = document.getElementById('studentCalGrid');
+  if (!titleEl || !gridEl) return;
+
+  const year = currentCalDate.getFullYear();
+  const month = currentCalDate.getMonth();
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  titleEl.textContent = `${monthNames[month]} ${year}`;
+
+  const weekdays = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  let html = weekdays.map(d => `<div class="cal-weekday">${d}</div>`).join('');
+
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  for (let i = 0; i < firstDay; i++) {
+    html += `<div class="cal-day empty"></div>`;
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const mm = String(month + 1).padStart(2, '0');
+    const dd = String(d).padStart(2, '0');
+    const dateIso = `${year}-${mm}-${dd}`;
+    const hasFb = STUDENT_FB_DATES.includes(dateIso);
+    const isSelected = (SELECTED_FB_DATE === dateIso);
+    const classes = ['cal-day'];
+    if (hasFb) classes.push('has-feedback');
+    if (isSelected) classes.push('selected');
+
+    html += `<button type="button" class="${classes.join(' ')}" onclick="selectCalendarDate('${dateIso}')" title="${hasFb ? 'Feedback submitted on ' + dateIso : dateIso}">${d}</button>`;
+  }
+
+  gridEl.innerHTML = html;
+}
+</script>
+
 <?php include_once __DIR__ . '/../includes/footer.php'; ?>
+

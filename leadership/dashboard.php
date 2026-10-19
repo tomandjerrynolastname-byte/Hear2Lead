@@ -4,9 +4,11 @@ require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/auth_check.php';
 
 $current_role = $_SESSION['user_role'] ?? 'Officer';
+$current_user_name = $_SESSION['user_name'] ?? '';
 $is_admin = ($current_role === 'Admin');
 $is_pres_or_vp = in_array($current_role, ['President', 'Vice President'], true);
 $can_manage_users = ($is_admin || $is_pres_or_vp);
+$can_manage_tasks = ($is_admin || $is_pres_or_vp);
 
 // Organization scoping
 $selected_org_id = 0;
@@ -47,21 +49,53 @@ if ($selected_org_id > 0) {
 }
 
 // 1. Fetch Task Statistics
-$task_scope_sql = ($selected_org_id > 0) ? "WHERE org_id = $selected_org_id" : "";
-$total_tasks = $pdo->query("SELECT COUNT(*) FROM tasks $task_scope_sql")->fetchColumn();
-$accomplished_tasks = $pdo->query("SELECT COUNT(*) FROM tasks " . ($selected_org_id > 0 ? "WHERE org_id = $selected_org_id AND status = 'Accomplished'" : "WHERE status = 'Accomplished'"))->fetchColumn();
-$todo_tasks = $pdo->query("SELECT COUNT(*) FROM tasks " . ($selected_org_id > 0 ? "WHERE org_id = $selected_org_id AND status = 'To Do'" : "WHERE status = 'To Do'"))->fetchColumn();
-$in_progress_tasks = $pdo->query("SELECT COUNT(*) FROM tasks " . ($selected_org_id > 0 ? "WHERE org_id = $selected_org_id AND status = 'In Progress'" : "WHERE status = 'In Progress'"))->fetchColumn();
-$overdue_tasks = $pdo->query("SELECT COUNT(*) FROM tasks " . ($selected_org_id > 0 ? "WHERE org_id = $selected_org_id AND status = 'Overdue'" : "WHERE status = 'Overdue'"))->fetchColumn();
+$task_conds = ["1=1"];
+$task_params = [];
+if ($selected_org_id > 0) {
+    $task_conds[] = "org_id = ?";
+    $task_params[] = $selected_org_id;
+}
+if (!$can_manage_tasks) {
+    $task_conds[] = "(assigned_to LIKE ? OR assigned_to = 'All Officers')";
+    $task_params[] = '%' . $current_user_name . '%';
+}
+$base_task_where = implode(" AND ", $task_conds);
+
+$stmt_stat = $pdo->prepare("SELECT COUNT(*) FROM tasks WHERE $base_task_where");
+$stmt_stat->execute($task_params);
+$total_tasks = $stmt_stat->fetchColumn();
+
+$stmt_stat = $pdo->prepare("SELECT COUNT(*) FROM tasks WHERE $base_task_where AND status = 'Accomplished'");
+$stmt_stat->execute($task_params);
+$accomplished_tasks = $stmt_stat->fetchColumn();
+
+$stmt_stat = $pdo->prepare("SELECT COUNT(*) FROM tasks WHERE $base_task_where AND status = 'To Do'");
+$stmt_stat->execute($task_params);
+$todo_tasks = $stmt_stat->fetchColumn();
+
+$stmt_stat = $pdo->prepare("SELECT COUNT(*) FROM tasks WHERE $base_task_where AND status = 'In Progress'");
+$stmt_stat->execute($task_params);
+$in_progress_tasks = $stmt_stat->fetchColumn();
+
+$stmt_stat = $pdo->prepare("SELECT COUNT(*) FROM tasks WHERE $base_task_where AND status = 'Overdue'");
+$stmt_stat->execute($task_params);
+$overdue_tasks = $stmt_stat->fetchColumn();
 
 // 2. Fetch Upcoming Deadlines
+$up_conds = ["t.status != 'Accomplished'"];
+$up_params = [];
 if ($selected_org_id > 0) {
-    $upcoming_stmt = $pdo->prepare("SELECT t.*, o.acronym FROM tasks t JOIN organizations o ON t.org_id = o.id WHERE t.org_id = ? AND t.status != 'Accomplished' ORDER BY t.deadline ASC LIMIT 6");
-    $upcoming_stmt->execute([$selected_org_id]);
-    $upcoming_deadlines = $upcoming_stmt->fetchAll();
-} else {
-    $upcoming_deadlines = $pdo->query("SELECT t.*, o.acronym FROM tasks t JOIN organizations o ON t.org_id = o.id WHERE t.status != 'Accomplished' ORDER BY t.deadline ASC LIMIT 6")->fetchAll();
+    $up_conds[] = "t.org_id = ?";
+    $up_params[] = $selected_org_id;
 }
+if (!$can_manage_tasks) {
+    $up_conds[] = "(t.assigned_to LIKE ? OR t.assigned_to = 'All Officers')";
+    $up_params[] = '%' . $current_user_name . '%';
+}
+$up_where = implode(" AND ", $up_conds);
+$upcoming_stmt = $pdo->prepare("SELECT t.*, o.acronym FROM tasks t JOIN organizations o ON t.org_id = o.id WHERE $up_where ORDER BY t.deadline ASC LIMIT 6");
+$upcoming_stmt->execute($up_params);
+$upcoming_deadlines = $upcoming_stmt->fetchAll();
 
 // 3. Fetch Recent Student Suggestions/Feedbacks
 if ($selected_org_id > 0) {
@@ -101,9 +135,11 @@ include_once __DIR__ . '/../includes/header.php';
     <a href="../student/index.php" class="btn btn-secondary" title="View Student Portal View">
       <i class="fa-solid fa-eye"></i> Monitor Student Portal
     </a>
-    <a href="tasks.php?action=new<?= $selected_org_id > 0 ? '&org_id=' . $selected_org_id : '' ?>" class="btn btn-primary">
-      <i class="fa-solid fa-plus"></i> Add New Task
-    </a>
+    <?php if ($can_manage_tasks): ?>
+      <a href="tasks.php?action=new<?= $selected_org_id > 0 ? '&org_id=' . $selected_org_id : '' ?>" class="btn btn-primary">
+        <i class="fa-solid fa-plus"></i> Add New Task
+      </a>
+    <?php endif; ?>
   </div>
 </div>
 
@@ -193,7 +229,7 @@ include_once __DIR__ . '/../includes/header.php';
     <div class="panel">
       <div class="panel-header">
         <span><i class="fa-solid fa-calendar-day" style="color: var(--danger);"></i> Task Deadlines Organizer</span>
-        <a href="tasks.php<?= $selected_org_id > 0 ? '?org_id=' . $selected_org_id : '' ?>" style="font-size: 0.85rem;">Manage All Tasks <i class="fa-solid fa-arrow-right"></i></a>
+        <a href="tasks.php<?= $selected_org_id > 0 ? '?org_id=' . $selected_org_id : '' ?>" style="font-size: 0.85rem;"><?= $can_manage_tasks ? 'Manage All Tasks' : 'View Assigned Tasks' ?> <i class="fa-solid fa-arrow-right"></i></a>
       </div>
 
       <?php if (empty($upcoming_deadlines)): ?>
@@ -229,7 +265,9 @@ include_once __DIR__ . '/../includes/header.php';
                 </div>
               </div>
 
-              <a href="tasks.php?edit=<?= $task['id'] ?>" class="btn btn-secondary btn-sm" title="Edit Task"><i class="fa-solid fa-pen"></i></a>
+              <?php if ($can_manage_tasks): ?>
+                <a href="tasks.php?edit=<?= $task['id'] ?>" class="btn btn-secondary btn-sm" title="Edit Task"><i class="fa-solid fa-pen"></i></a>
+              <?php endif; ?>
             </li>
           <?php endforeach; ?>
         </ul>

@@ -124,7 +124,7 @@ CREATE TABLE `tasks` (
   `status` enum('To Do','In Progress','Accomplished','Overdue') DEFAULT 'To Do',
   `priority` enum('Low','Medium','High') DEFAULT 'Medium',
   `deadline` date NOT NULL,
-  `assigned_to` varchar(100) DEFAULT 'All Officers',
+  `assigned_to` text DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

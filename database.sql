@@ -71,10 +71,25 @@ CREATE TABLE IF NOT EXISTS `tasks` (
   `status` ENUM('To Do', 'In Progress', 'Accomplished', 'Overdue') DEFAULT 'To Do',
   `priority` ENUM('Low', 'Medium', 'High') DEFAULT 'Medium',
   `deadline` DATE NOT NULL,
-  `assigned_to` VARCHAR(100) DEFAULT 'All Officers',
+  `assigned_to` TEXT DEFAULT NULL,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`org_id`) REFERENCES `organizations`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- --------------------------------------------------------
+-- Table: task_logs (Task Creation & Update History with Timestamps)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `task_logs` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `task_id` INT NOT NULL,
+  `user_id` INT DEFAULT NULL,
+  `user_name` VARCHAR(100) NOT NULL,
+  `user_role` VARCHAR(50) NOT NULL,
+  `action_type` VARCHAR(50) NOT NULL,
+  `log_details` TEXT NOT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`task_id`) REFERENCES `tasks`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- --------------------------------------------------------
@@ -116,6 +131,7 @@ INSERT INTO `students` (`id`, `student_lrn`, `full_name`, `grade_section`, `emai
 CREATE TABLE IF NOT EXISTS `feedbacks` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `org_id` INT NOT NULL,
+  `student_id` INT DEFAULT NULL,
   `student_name` VARCHAR(100) NOT NULL,
   `student_email` VARCHAR(100) DEFAULT NULL,
   `student_grade_section` VARCHAR(50) DEFAULT NULL,
@@ -127,4 +143,19 @@ CREATE TABLE IF NOT EXISTS `feedbacks` (
   `responded_at` DATETIME DEFAULT NULL,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`org_id`) REFERENCES `organizations`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- --------------------------------------------------------
+-- Table: feedback_logs (Multiple Officer Replies with Timestamps)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `feedback_logs` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `feedback_id` INT NOT NULL,
+  `user_id` INT DEFAULT NULL,
+  `officer_name` VARCHAR(100) NOT NULL,
+  `officer_role` VARCHAR(50) NOT NULL,
+  `status` VARCHAR(50) NOT NULL,
+  `reply_message` TEXT NOT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`feedback_id`) REFERENCES `feedbacks`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

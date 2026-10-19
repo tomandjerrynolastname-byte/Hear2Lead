@@ -1677,3 +1677,320 @@ footer {
 
 
 
+/* ==========================================================================
+   Vertical Left-Aligned Stepper Style for Task & Feedback Logs
+   ========================================================================== */
+.log-stepper {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding: 0.25rem 0;
+  text-align: left;
+}
+
+.log-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+  position: relative;
+  padding-bottom: 1.25rem;
+  text-align: left;
+}
+
+.log-step:last-child {
+  padding-bottom: 0;
+}
+
+/* Vertical connecting line between stepper nodes */
+.log-step::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 32px;
+  bottom: 0;
+  width: 2px;
+  background: var(--gray-300);
+  z-index: 1;
+}
+
+.log-step:last-child::before {
+  display: none;
+}
+
+.log-step-node {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--primary-light);
+  color: var(--primary);
+  border: 2px solid var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 800;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+  box-shadow: 0 0 0 3px var(--white);
+}
+
+.log-step.step-success .log-step-node {
+  background: var(--success-light);
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.log-step.step-info .log-step-node {
+  background: var(--info-light);
+  color: var(--info);
+  border-color: var(--info);
+}
+
+.log-step.step-warning .log-step-node {
+  background: var(--warning-light);
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.log-step-content {
+  flex: 1;
+  min-width: 0;
+  background: var(--cream-light);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  box-shadow: var(--shadow-sm);
+  text-align: left;
+}
+
+.log-step-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.log-step-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--dark);
+}
+
+.log-step-role {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--gray-600);
+}
+
+.log-step-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--gray-600);
+  background: var(--gray-100);
+  padding: 0.15rem 0.55rem;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--gray-200);
+}
+
+.log-step-body {
+  font-size: 0.88rem;
+  color: var(--gray-800);
+  line-height: 1.5;
+  text-align: left;
+  word-break: break-word;
+}
+
+/* Student Reply Step Variant in Stepper */
+.log-step.step-student .log-step-node {
+  background: #ede9fe;
+  color: #6d28d9;
+  border-color: #7c3aed;
+}
+
+.log-step.step-student .log-step-content {
+  background: #f5f3ff;
+  border-color: #ddd6fe;
+}
+
+.badge-student-reply {
+  background: #ede9fe;
+  color: #6d28d9;
+  border: 1px solid #c4b5fd;
+  font-weight: 700;
+}
+
+/* Hidden Log Steps & Show More / Show Less Toggle */
+.log-step.log-step-hidden {
+  display: none;
+}
+
+/* Remove vertical connector line on the last visible step when collapsed */
+.log-step.log-step-last-visible::before {
+  display: none;
+}
+
+.log-stepper-toggle-wrap {
+  display: flex;
+  align-items: center;
+  padding-left: 4px;
+  margin-top: 0.5rem;
+}
+
+.log-stepper-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--white);
+  color: var(--primary);
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-full);
+  padding: 0.32rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition);
+  box-shadow: var(--shadow-sm);
+  font-family: inherit;
+}
+
+.log-stepper-toggle-btn:hover {
+  background: var(--primary-light);
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+
+/* Feedback Mini Calendar Widget */
+.calendar-dropdown-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.calendar-popover {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 1200;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 1rem;
+  width: 290px;
+}
+
+.calendar-popover.active {
+  display: block;
+  animation: modalSlide 0.18s ease-out;
+}
+
+.cal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.65rem;
+}
+
+.cal-month-title {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: var(--dark);
+}
+
+.cal-nav-btn {
+  background: var(--gray-100);
+  border: 1px solid var(--gray-200);
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--gray-700);
+  transition: var(--transition);
+}
+
+.cal-nav-btn:hover {
+  background: var(--primary-light);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+  text-align: center;
+}
+
+.cal-weekday {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--gray-500);
+  text-transform: uppercase;
+  padding-bottom: 0.3rem;
+}
+
+.cal-day {
+  position: relative;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--gray-700);
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  transition: var(--transition);
+}
+
+.cal-day:hover:not(.empty) {
+  background: var(--primary-light);
+  color: var(--primary);
+}
+
+.cal-day.empty {
+  cursor: default;
+}
+
+.cal-day.has-feedback {
+  font-weight: 800;
+  color: var(--primary);
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.cal-day.has-feedback::after {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.cal-day.selected {
+  background: var(--primary) !important;
+  color: var(--white) !important;
+  border-color: var(--primary) !important;
+}
+
+.cal-day.selected::after {
+  background: var(--white);
+}
+

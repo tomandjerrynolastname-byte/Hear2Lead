@@ -236,40 +236,46 @@ function initPageLoader() {
 }
 
 
-// Helper function to dynamically populate edit modal fields
-function openTaskEditModal(task) {
-  const modal = document.getElementById('editTaskModal');
-  if (!modal) return;
+// Helper function to dynamically populate edit modal fields (if not overridden by page)
+if (typeof window.openTaskEditModal !== 'function') {
+  window.openTaskEditModal = function(task) {
+    const modal = document.getElementById('editTaskModal');
+    if (!modal) return;
 
-  document.getElementById('edit_task_id').value = task.id;
-  document.getElementById('edit_task_title').value = task.title;
-  document.getElementById('edit_task_description').value = task.description || '';
-  document.getElementById('edit_task_status').value = task.status;
-  document.getElementById('edit_task_priority').value = task.priority;
-  document.getElementById('edit_task_deadline').value = task.deadline;
-  document.getElementById('edit_task_assigned_to').value = task.assigned_to || '';
-  if (document.getElementById('edit_task_project_id')) {
-    document.getElementById('edit_task_project_id').value = task.project_id || '';
-  }
+    document.getElementById('edit_task_id').value = task.id;
+    document.getElementById('edit_task_title').value = task.title;
+    document.getElementById('edit_task_description').value = task.description || '';
+    document.getElementById('edit_task_status').value = task.status;
+    document.getElementById('edit_task_priority').value = task.priority;
+    document.getElementById('edit_task_deadline').value = task.deadline;
+    if (document.getElementById('edit_task_assigned_to')) {
+      document.getElementById('edit_task_assigned_to').value = task.assigned_to || '';
+    }
+    if (document.getElementById('edit_task_project_id')) {
+      document.getElementById('edit_task_project_id').value = task.project_id || '';
+    }
 
-  modal.classList.add('active');
-  document.body.style.overflow = 'hidden';
+    modal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  };
 }
 
-// Helper to open respond modal for feedbacks
-function openFeedbackRespondModal(feedback) {
-  const modal = document.getElementById('respondFeedbackModal');
-  if (!modal) return;
+// Helper to open respond modal for feedbacks (if not overridden by page)
+if (typeof window.openFeedbackRespondModal !== 'function') {
+  window.openFeedbackRespondModal = function(feedback) {
+    const modal = document.getElementById('respondFeedbackModal');
+    if (!modal) return;
 
-  document.getElementById('respond_feedback_id').value = feedback.id;
-  document.getElementById('respond_student_name').textContent = feedback.student_name;
-  document.getElementById('respond_subject').textContent = feedback.subject;
-  document.getElementById('respond_message').textContent = feedback.message;
-  document.getElementById('respond_status').value = feedback.status;
-  document.getElementById('respond_officer_response').value = feedback.officer_response || '';
+    document.getElementById('respond_feedback_id').value = feedback.id;
+    document.getElementById('respond_student_name').textContent = feedback.student_name;
+    document.getElementById('respond_subject').textContent = feedback.subject;
+    document.getElementById('respond_message').textContent = feedback.message;
+    document.getElementById('respond_status').value = feedback.status;
+    document.getElementById('respond_officer_response').value = feedback.officer_response || '';
 
-  modal.classList.add('active');
-  document.body.style.overflow = 'hidden';
+    modal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  };
 }
 
 // ==========================================================================
@@ -411,3 +417,40 @@ window.showToast = function(message, type = 'success', duration = 4500) {
   container.appendChild(toast);
   window.attachToastBehavior(toast, duration);
 };
+
+// Global helper for Show More / Show Less on Vertical Stepper Logs
+window.toggleStepperLogs = function(btn) {
+  if (!btn) return;
+  const wrapper = btn.closest('.log-stepper-container');
+  if (!wrapper) return;
+  const stepper = wrapper.querySelector('.log-stepper');
+  if (!stepper) return;
+
+  const limit = parseInt(stepper.getAttribute('data-initial-limit') || '1', 10);
+  const isExpanded = btn.getAttribute('data-expanded') === 'true';
+  const steps = Array.from(stepper.querySelectorAll('.log-step'));
+  const hiddenCount = Math.max(0, steps.length - limit);
+
+  if (isExpanded) {
+    steps.forEach((step, idx) => {
+      if (idx >= limit) {
+        step.classList.add('log-step-hidden');
+      }
+      if (idx === limit - 1 && steps.length > limit) {
+        step.classList.add('log-step-last-visible');
+      } else {
+        step.classList.remove('log-step-last-visible');
+      }
+    });
+    btn.setAttribute('data-expanded', 'false');
+    btn.innerHTML = `<i class="fa-solid fa-chevron-down"></i> Show More (${hiddenCount} more ${hiddenCount === 1 ? 'log' : 'logs'})`;
+  } else {
+    steps.forEach(step => {
+      step.classList.remove('log-step-hidden');
+      step.classList.remove('log-step-last-visible');
+    });
+    btn.setAttribute('data-expanded', 'true');
+    btn.innerHTML = `<i class="fa-solid fa-chevron-up"></i> Show Less`;
+  }
+};
+

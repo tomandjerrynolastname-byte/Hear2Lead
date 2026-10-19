@@ -94,13 +94,20 @@ $projects = $pdo->query("SELECT p.*, o.name as org_name, o.acronym FROM projects
               </span>
             </div>
             <div class="card-body">
-              <p><?= htmlspecialchars($acc['description']) ?></p>
+              <p><?= htmlspecialchars(mb_strimwidth($acc['description'], 0, 150, '...')) ?></p>
             </div>
-            <?php if (!empty($acc['impact_summary'])): ?>
-              <div class="card-footer" style="background: var(--gray-100); margin: 0 -1.5rem -1.5rem -1.5rem; padding: 0.75rem 1.5rem; border-bottom-left-radius: var(--radius); border-bottom-right-radius: var(--radius);">
-                <span><i class="fa-solid fa-chart-line" style="color: var(--success);"></i> <strong>Impact:</strong> <?= htmlspecialchars($acc['impact_summary']) ?></span>
-              </div>
-            <?php endif; ?>
+            <div class="card-footer" style="background: var(--gray-100); margin: 0 -1.5rem -1.5rem -1.5rem; padding: 0.75rem 1.5rem; border-bottom-left-radius: var(--radius); border-bottom-right-radius: var(--radius); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+              <span>
+                <?php if (!empty($acc['impact_summary'])): ?>
+                  <i class="fa-solid fa-chart-line" style="color: var(--success);"></i> <strong>Impact:</strong> <?= htmlspecialchars($acc['impact_summary']) ?>
+                <?php else: ?>
+                  <i class="fa-solid fa-building-columns" style="color: var(--primary);"></i> <?= htmlspecialchars($acc['org_name']) ?>
+                <?php endif; ?>
+              </span>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="openOverviewAccModal(<?= intval($acc['id']) ?>)">
+                <i class="fa-solid fa-eye"></i> View Details
+              </button>
+            </div>
           </div>
         <?php endforeach; ?>
       <?php endif; ?>
@@ -128,9 +135,14 @@ $projects = $pdo->query("SELECT p.*, o.name as org_name, o.acronym FROM projects
             <div class="progress-container">
               <div class="progress-bar" style="width: <?= $proj['progress_percent'] ?>%;"></div>
             </div>
-            <div class="progress-info" style="margin-top: 0.5rem;">
-              <span>Target Finish: <?= date('M d, Y', strtotime($proj['target_date'])) ?></span>
-              <span>Status: <?= $proj['status'] ?></span>
+            <div class="progress-info" style="margin-top: 0.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+              <div>
+                <span>Target Finish: <?= $proj['target_date'] ? date('M d, Y', strtotime($proj['target_date'])) : 'TBA' ?></span>
+                <span style="margin-left: 0.75rem;">Status: <?= htmlspecialchars($proj['status']) ?></span>
+              </div>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="openOverviewProjModal(<?= intval($proj['id']) ?>)">
+                <i class="fa-solid fa-eye"></i> View Details
+              </button>
             </div>
           </div>
         <?php endforeach; ?>
@@ -173,4 +185,157 @@ $projects = $pdo->query("SELECT p.*, o.name as org_name, o.acronym FROM projects
   </div>
 </div>
 
+<!-- Overview Accomplishment Complete Details Modal -->
+<div class="modal-backdrop" id="overviewAccModal">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 style="font-size: 1.2rem; font-weight: 700; color: var(--dark);">
+        <i class="fa-solid fa-trophy" style="color: var(--warning);"></i> Accomplishment Complete Details
+      </h3>
+      <button class="close-btn" data-modal-close>&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.65rem;">
+        <span class="badge badge-accomplished" id="ov_acc_acronym"></span>
+        <span class="badge badge-planning" id="ov_acc_badge"></span>
+      </div>
+      <h3 id="ov_acc_title" style="font-size: 1.3rem; font-weight: 800; color: var(--dark); margin-bottom: 0.35rem;"></h3>
+      <div id="ov_acc_org_name" style="font-size: 0.85rem; font-weight: 600; color: var(--gray-600); margin-bottom: 1rem;"></div>
+      <div style="background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: var(--radius-sm); padding: 0.75rem; margin-bottom: 1rem;">
+        <div style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: var(--gray-500);">Date Accomplished</div>
+        <div id="ov_acc_date" style="font-size: 0.92rem; font-weight: 700; color: var(--dark); margin-top: 0.2rem;"></div>
+      </div>
+      <div style="margin-bottom: 1rem;">
+        <div style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; color: var(--gray-500); margin-bottom: 0.4rem;">Full Description</div>
+        <div id="ov_acc_desc" style="background: var(--cream-light); border: 1px solid var(--gray-200); border-radius: var(--radius-sm); padding: 1rem; font-size: 0.95rem; color: var(--gray-800); line-height: 1.65; white-space: pre-wrap;"></div>
+      </div>
+      <div id="ov_acc_impact_box" style="display: none; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: var(--radius-sm); padding: 0.85rem 1rem;">
+        <div style="font-size: 0.75rem; font-weight: 800; text-transform: uppercase; color: #047857;">Impact Summary</div>
+        <div id="ov_acc_impact" style="font-size: 0.92rem; font-weight: 700; color: #065f46; margin-top: 0.2rem;"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <?php if (isset($_SESSION['user_id'])): ?>
+        <a id="ov_acc_edit_link" href="../leadership/accomplishments.php" class="btn btn-primary btn-sm"><i class="fa-solid fa-pen-to-square"></i> Edit in Leadership Portal</a>
+      <?php endif; ?>
+      <button type="button" class="btn btn-secondary" data-modal-close>Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Overview Project Progress Complete Details Modal -->
+<div class="modal-backdrop" id="overviewProjModal">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 style="font-size: 1.2rem; font-weight: 700; color: var(--dark);">
+        <i class="fa-solid fa-chart-line" style="color: var(--secondary);"></i> Project Progress Complete Details
+      </h3>
+      <button class="close-btn" data-modal-close>&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.65rem;">
+        <span class="badge badge-planning" id="ov_proj_acronym"></span>
+        <span class="badge badge-in-progress" id="ov_proj_status"></span>
+      </div>
+      <h3 id="ov_proj_title" style="font-size: 1.3rem; font-weight: 800; color: var(--dark); margin-bottom: 0.35rem;"></h3>
+      <div id="ov_proj_org_name" style="font-size: 0.85rem; font-weight: 600; color: var(--gray-600); margin-bottom: 1rem;"></div>
+      <div style="background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: var(--radius-sm); padding: 0.9rem 1rem; margin-bottom: 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
+          <span style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: var(--gray-600);">Overall Completion</span>
+          <strong id="ov_proj_pct" style="font-size: 1.05rem; color: var(--primary);"></strong>
+        </div>
+        <div class="progress-container" style="height: 10px; margin: 0;">
+          <div class="progress-bar" id="ov_proj_bar" style="width: 0%;"></div>
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;">
+        <div style="background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: var(--radius-sm); padding: 0.75rem;">
+          <div style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: var(--gray-500);">Start Date</div>
+          <div id="ov_proj_start" style="font-size: 0.9rem; font-weight: 700; color: var(--dark); margin-top: 0.2rem;"></div>
+        </div>
+        <div style="background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: var(--radius-sm); padding: 0.75rem;">
+          <div style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: var(--gray-500);">Target Completion</div>
+          <div id="ov_proj_target" style="font-size: 0.9rem; font-weight: 700; color: var(--dark); margin-top: 0.2rem;"></div>
+        </div>
+      </div>
+      <div>
+        <div style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; color: var(--gray-500); margin-bottom: 0.4rem;">Full Project Description</div>
+        <div id="ov_proj_desc" style="background: var(--cream-light); border: 1px solid var(--gray-200); border-radius: var(--radius-sm); padding: 1rem; font-size: 0.95rem; color: var(--gray-800); line-height: 1.65; white-space: pre-wrap;"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <?php if (isset($_SESSION['user_id'])): ?>
+        <a id="ov_proj_edit_link" href="../leadership/projects.php" class="btn btn-primary btn-sm"><i class="fa-solid fa-pen-to-square"></i> Edit in Leadership Portal</a>
+      <?php endif; ?>
+      <button type="button" class="btn btn-secondary" data-modal-close>Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const OV_ACCOMPLISHMENTS = <?= json_encode($accomplishments) ?>;
+const OV_PROJECTS = <?= json_encode($projects) ?>;
+
+function formatOvDate(dateStr) {
+  if (!dateStr) return 'TBA';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+}
+
+function openOverviewAccModal(accId) {
+  const modal = document.getElementById('overviewAccModal');
+  if (!modal) return;
+  const acc = OV_ACCOMPLISHMENTS.find(a => parseInt(a.id, 10) === parseInt(accId, 10));
+  if (!acc) return;
+
+  document.getElementById('ov_acc_acronym').textContent = acc.acronym || '';
+  document.getElementById('ov_acc_badge').textContent = acc.badge_tag || 'Completed';
+  document.getElementById('ov_acc_title').textContent = acc.title || '';
+  document.getElementById('ov_acc_org_name').textContent = acc.org_name || '';
+  document.getElementById('ov_acc_date').textContent = formatOvDate(acc.date_accomplished);
+  document.getElementById('ov_acc_desc').textContent = acc.description || 'No description provided.';
+
+  const impBox = document.getElementById('ov_acc_impact_box');
+  if (acc.impact_summary && acc.impact_summary.trim() !== '') {
+    impBox.style.display = 'block';
+    document.getElementById('ov_acc_impact').textContent = acc.impact_summary;
+  } else {
+    impBox.style.display = 'none';
+  }
+
+  const editLink = document.getElementById('ov_acc_edit_link');
+  if (editLink) editLink.href = '../leadership/accomplishments.php?edit=' + encodeURIComponent(acc.id);
+
+  modal.classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+
+function openOverviewProjModal(projId) {
+  const modal = document.getElementById('overviewProjModal');
+  if (!modal) return;
+  const proj = OV_PROJECTS.find(p => parseInt(p.id, 10) === parseInt(projId, 10));
+  if (!proj) return;
+
+  document.getElementById('ov_proj_acronym').textContent = proj.acronym || '';
+  document.getElementById('ov_proj_status').textContent = 'Status: ' + (proj.status || 'Ongoing');
+  document.getElementById('ov_proj_title').textContent = proj.title || '';
+  document.getElementById('ov_proj_org_name').textContent = proj.org_name || '';
+
+  const pct = parseInt(proj.progress_percent || 0, 10);
+  document.getElementById('ov_proj_pct').textContent = pct + '%';
+  document.getElementById('ov_proj_bar').style.width = pct + '%';
+  document.getElementById('ov_proj_start').textContent = formatOvDate(proj.start_date);
+  document.getElementById('ov_proj_target').textContent = formatOvDate(proj.target_date);
+  document.getElementById('ov_proj_desc').textContent = proj.description || 'No description provided.';
+
+  const editLink = document.getElementById('ov_proj_edit_link');
+  if (editLink) editLink.href = '../leadership/projects.php?edit=' + encodeURIComponent(proj.id);
+
+  modal.classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+</script>
+
 <?php include_once __DIR__ . '/../includes/footer.php'; ?>
+
