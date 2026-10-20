@@ -3,10 +3,13 @@
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/auth_check.php';
 
+$current_user_id = intval($_SESSION['user_id'] ?? 0);
+$current_user_name = $_SESSION['user_name'] ?? 'Officer';
 $current_role = $_SESSION['user_role'] ?? 'Officer';
 $is_admin = ($current_role === 'Admin');
 $current_org_id = intval($_SESSION['org_id']);
 $filter_org = $is_admin ? (isset($_GET['org_id']) ? intval($_GET['org_id']) : 0) : $current_org_id;
+$active_tab = (isset($_GET['tab']) && $_GET['tab'] === 'logs') ? 'logs' : 'projects';
 
 $success_msg = '';
 $error_msg = '';
@@ -28,7 +31,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $stmt = $pdo->prepare("INSERT INTO projects (org_id, title, description, status, progress_percent, start_date, target_date) VALUES (?, ?, ?, ?, ?, ?, ?)");
             if ($stmt->execute([$proj_org_id, $title, $description, $status, $progress_percent, $start_date, $target_date])) {
-                $success_msg = "Project created successfully!";
+                $new_proj_id = intval($pdo->lastInsertId());
+                $target_label = $target_date ? date('M d, Y', strtotime($target_date)) : 'TBA';
+                $log_details = "Project created with title \"$title\", status '$status', progress {$progress_percent}%, target date: $target_label.";
+                $log_stmt = $pdo->prepare("INSERT INTO project_logs (project_id, user_id, user_name, user_role, action_type, log_details) VALUES (?, ?, ?, ?, 'Created', ?)");
+                $log_stmt->execute([$new_proj_id, $current_user_id, $current_user_name, $current_role, $log_details]);
+
+                $success_msg = "Project created and logged successfully!";
             } else {
                 $error_msg = "Failed to create project.";
             }
@@ -44,21 +53,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $start_date = !empty($_POST['start_date']) ? $_POST['start_date'] : null;
         $target_date = !empty($_POST['target_date']) ? $_POST['target_date'] : null;
 
+        $old_stmt = $pdo->prepare("SELECT * FROM projects WHERE id = ?");
+        $old_stmt->execute([$project_id]);
+        $old_proj = $old_stmt->fetch();
+
+        $updated = false;
         if ($is_admin) {
             $proj_org_id = !empty($_POST['org_id']) ? intval($_POST['org_id']) : $current_org_id;
             $stmt = $pdo->prepare("UPDATE projects SET org_id = ?, title = ?, description = ?, status = ?, progress_percent = ?, start_date = ?, target_date = ? WHERE id = ?");
-            if ($stmt->execute([$proj_org_id, $title, $description, $status, $progress_percent, $start_date, $target_date, $project_id])) {
-                $success_msg = "Project updated successfully!";
-            } else {
-                $error_msg = "Failed to update project.";
-            }
+            $updated = $stmt->execute([$proj_org_id, $title, $description, $status, $progress_percent, $start_date, $target_date, $project_id]);
         } else {
             $stmt = $pdo->prepare("UPDATE projects SET title = ?, description = ?, status = ?, progress_percent = ?, start_date = ?, target_date = ? WHERE id = ? AND org_id = ?");
-            if ($stmt->execute([$title, $description, $status, $progress_percent, $start_date, $target_date, $project_id, $current_org_id])) {
-                $success_msg = "Project updated successfully!";
-            } else {
-                $error_msg = "Failed to update project.";
+            $updated = $stmt->execute([$title, $description, $status, $progress_percent, $start_date, $target_date, $project_id, $current_org_id]);
+        }
+
+        if ($updated) {
+            $changes = [];
+            if ($old_proj) {
+                if ($old_proj['title'] !== $title) {
+                    $changes[] = "Title changed from \"{$old_proj['title']}\" to \"$title\"";
+                }
+                if (($old_proj['description'] ?? '') !== $description) {
+                    $changes[] = "Description updated";
+                }
+                if ($old_proj['status'] !== $status) {
+                    $changes[] = "Status changed from '{$old_proj['status']}' to '$status'";
+                }
+                if (intval($old_proj['progress_percent']) !== $progress_percent) {
+                    $changes[] = "Progress updated from {$old_proj['progress_percent']}% to {$progress_percent}%";
+                }
+                if (($old_proj['start_date'] ?? '') !== ($start_date ?? '')) {
+                    $changes[] = "Start date updated";
+                }
+                if (($old_proj['target_date'] ?? '') !== ($target_date ?? '')) {
+                    $changes[] = "Target completion date updated";
+                }
             }
+            $action_type = ($old_proj && (intval($old_proj['progress_percent']) !== $progress_percent || $old_proj['status'] !== $status)) ? 'Progress Updated' : 'Updated';
+            $log_details = !empty($changes)
+                ? implode(' • ', $changes)
+                : "Project saved (Status: '$status', Progress: {$progress_percent}%).";
+            $log_stmt = $pdo->prepare("INSERT INTO project_logs (project_id, user_id, user_name, user_role, action_type, log_details) VALUES (?, ?, ?, ?, ?, ?)");
+            $log_stmt->execute([$project_id, $current_user_id, $current_user_name, $current_role, $action_type, $log_details]);
+
+            $success_msg = "Project updated and logged successfully!";
+        } else {
+            $error_msg = "Failed to update project.";
         }
     }
 
@@ -98,6 +138,8 @@ $projects = $stmt->fetchAll();
 
 // Fetch tasks linked to these projects for complete milestone details in the modal
 $tasks_by_project = [];
+$project_logs_by_project = [];
+$all_project_logs = [];
 if (!empty($projects)) {
     $proj_ids = array_map(function($p) { return intval($p['id']); }, $projects);
     $placeholders = implode(',', array_fill(0, count($proj_ids), '?'));
@@ -105,6 +147,20 @@ if (!empty($projects)) {
     $stmt_t->execute($proj_ids);
     foreach ($stmt_t->fetchAll() as $t) {
         $tasks_by_project[intval($t['project_id'])][] = $t;
+    }
+
+    $stmt_pl = $pdo->prepare("SELECT pl.*, p.title as project_title, p.status as project_status, p.progress_percent, o.acronym as org_acronym
+                              FROM project_logs pl
+                              JOIN projects p ON pl.project_id = p.id
+                              LEFT JOIN organizations o ON p.org_id = o.id
+                              WHERE pl.project_id IN ($placeholders)
+                              ORDER BY pl.created_at DESC, pl.id DESC");
+    $stmt_pl->execute($proj_ids);
+    foreach ($stmt_pl->fetchAll() as $log) {
+        $pid = intval($log['project_id']);
+        $log['formatted_time'] = date('M d, Y • g:i:s A', strtotime($log['created_at']));
+        $project_logs_by_project[$pid][] = $log;
+        $all_project_logs[] = $log;
     }
 }
 
@@ -155,6 +211,7 @@ include_once __DIR__ . '/../includes/header.php';
 <?php if ($is_admin): ?>
   <div class="filter-bar" style="margin-bottom: 1.5rem;">
     <form method="GET" action="projects.php" style="display: flex; gap: 1rem; align-items: center; width: 100%; flex-wrap: wrap;">
+      <input type="hidden" name="tab" id="projFilterTabInput" value="<?= htmlspecialchars($active_tab) ?>">
       <div class="filter-group">
         <label class="form-label" style="margin: 0;">Organization Filter:</label>
         <select name="org_id" class="form-control" onchange="this.form.submit()">
@@ -167,12 +224,28 @@ include_once __DIR__ . '/../includes/header.php';
         </select>
       </div>
       <?php if ($filter_org > 0): ?>
-        <a href="projects.php" class="btn btn-secondary btn-sm"><i class="fa-solid fa-rotate-left"></i> View All</a>
+        <a href="projects.php?tab=<?= htmlspecialchars($active_tab) ?>" class="btn btn-secondary btn-sm"><i class="fa-solid fa-rotate-left"></i> View All</a>
       <?php endif; ?>
     </form>
   </div>
 <?php endif; ?>
 
+<!-- Tab Panel Navigation -->
+<div class="user-tabs-nav">
+  <button type="button" class="user-tab-btn <?= $active_tab === 'projects' ? 'active' : '' ?>" onclick="switchProjectTab('projects')">
+    <i class="fa-solid fa-folder-tree"></i>
+    <span>Programs & Projects</span>
+    <span class="user-tab-badge"><?= count($projects) ?></span>
+  </button>
+  <button type="button" class="user-tab-btn <?= $active_tab === 'logs' ? 'active' : '' ?>" onclick="switchProjectTab('logs')">
+    <i class="fa-solid fa-clock-rotate-left"></i>
+    <span>Project Activity Logs</span>
+    <span class="user-tab-badge"><?= count($all_project_logs) ?></span>
+  </button>
+</div>
+
+<!-- TAB 1: Programs & Projects Table -->
+<div class="user-tab-pane <?= $active_tab === 'projects' ? 'active' : '' ?>" id="tab-projects">
 <div class="table-container">
   <table class="table">
     <thead>
@@ -185,7 +258,7 @@ include_once __DIR__ . '/../includes/header.php';
         <th>Progress</th>
         <th>Status</th>
         <th>Target Completion</th>
-        <th>Actions</th>
+        <th>Actions & Logs</th>
       </tr>
     </thead>
     <tbody>
@@ -201,6 +274,7 @@ include_once __DIR__ . '/../includes/header.php';
             'Planning' => 'badge-todo'
           ];
           $proj_badge_class = $proj_status_badges[$proj['status']] ?? 'badge-planning';
+          $proj_log_count = count($project_logs_by_project[intval($proj['id'])] ?? []);
         ?>
           <tr>
             <?php if ($is_admin && $filter_org === 0): ?>
@@ -229,10 +303,13 @@ include_once __DIR__ . '/../includes/header.php';
                 <button type="button" class="btn btn-secondary btn-sm" onclick="openViewProjectModal(<?= intval($proj['id']) ?>)" title="View Complete Details">
                   <i class="fa-solid fa-eye"></i> View
                 </button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="openProjectLogsModal(<?= intval($proj['id']) ?>)" title="View Project Activity Logs">
+                  <i class="fa-solid fa-clock-rotate-left"></i> Logs (<?= $proj_log_count ?>)
+                </button>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="openProjectEditModal(<?= intval($proj['id']) ?>)" title="Edit Project & Progress">
                   <i class="fa-solid fa-pen"></i> Edit
                 </button>
-                <form method="POST" action="projects.php" onsubmit="return confirm('Delete this project?');" style="display: inline; margin: 0;">
+                <form method="POST" action="projects.php" onsubmit="return confirmDeleteSwal(event, 'Are you sure you want to delete this project?', 'Delete Project?');" style="display: inline; margin: 0;">
                   <input type="hidden" name="action" value="delete_project">
                   <input type="hidden" name="project_id" value="<?= $proj['id'] ?>">
                   <button type="submit" class="btn btn-danger btn-sm" title="Delete Project"><i class="fa-solid fa-trash"></i></button>
@@ -244,6 +321,85 @@ include_once __DIR__ . '/../includes/header.php';
       <?php endif; ?>
     </tbody>
   </table>
+</div>
+</div>
+
+<!-- TAB 2: Project Activity Logs Pane -->
+<div class="user-tab-pane <?= $active_tab === 'logs' ? 'active' : '' ?>" id="tab-logs">
+  <div class="panel">
+    <div class="panel-header">
+      <span><i class="fa-solid fa-clock-rotate-left" style="color: var(--primary);"></i> Program & Project Progress Activity Logs</span>
+      <span style="font-size: 0.85rem; color: var(--gray-500);"><?= count($all_project_logs) ?> Total Entries</span>
+    </div>
+
+    <?php if (empty($all_project_logs)): ?>
+      <div style="text-align: center; padding: 2.5rem; color: var(--gray-500);">
+        <i class="fa-solid fa-clock-rotate-left" style="font-size: 2.2rem; color: var(--gray-400); margin-bottom: 0.5rem; display: block;"></i>
+        No project activity logs recorded for the selected criteria.
+      </div>
+    <?php else: ?>
+      <div class="table-container" style="box-shadow: none; border: none; margin: 0;">
+        <table class="table">
+          <thead>
+            <tr>
+              <?php if ($is_admin && $filter_org === 0): ?>
+                <th>Org</th>
+              <?php endif; ?>
+              <th>Project Title</th>
+              <th>Action</th>
+              <th>Logged By</th>
+              <th>Activity & Progress Details</th>
+              <th>Timestamp</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($all_project_logs as $log):
+              $action_badge = $log['action_type'] === 'Created' ? 'badge-accomplished' : ($log['action_type'] === 'Progress Updated' ? 'badge-todo' : 'badge-in-progress');
+            ?>
+              <tr>
+                <?php if ($is_admin && $filter_org === 0): ?>
+                  <td><span class="badge badge-planning"><strong><?= htmlspecialchars($log['org_acronym'] ?? 'ORG') ?></strong></span></td>
+                <?php endif; ?>
+                <td><strong style="color: var(--dark);"><?= htmlspecialchars($log['project_title'] ?? ('Project #' . $log['project_id'])) ?></strong></td>
+                <td><span class="badge <?= $action_badge ?>"><?= htmlspecialchars($log['action_type']) ?></span></td>
+                <td>
+                  <div style="font-weight: 700; color: var(--dark); font-size: 0.88rem;"><?= htmlspecialchars($log['user_name']) ?></div>
+                  <div style="font-size: 0.75rem; color: var(--gray-500);"><?= htmlspecialchars($log['user_role']) ?></div>
+                </td>
+                <td style="font-size: 0.86rem; color: var(--gray-800); max-width: 420px;"><?= htmlspecialchars($log['log_details']) ?></td>
+                <td style="white-space: nowrap; font-size: 0.8rem; color: var(--gray-600);">
+                  <i class="fa-regular fa-clock"></i> <?= htmlspecialchars($log['formatted_time']) ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    <?php endif; ?>
+  </div>
+</div>
+
+<!-- View Project Activity Logs Modal -->
+<div class="modal-backdrop" id="viewProjectLogsModal">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 style="font-size: 1.2rem; font-weight: 700; color: var(--dark);">
+        <i class="fa-solid fa-clock-rotate-left" style="color: var(--primary);"></i> Project Activity Logs
+      </h3>
+      <button class="close-btn" data-modal-close>&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="background: var(--gray-100); padding: 0.85rem 1rem; border-radius: var(--radius-sm); margin-bottom: 1rem; border: 1px solid var(--gray-200);">
+        <div style="font-size: 0.78rem; color: var(--gray-500); text-transform: uppercase; font-weight: 700;">Program / Project</div>
+        <div id="log_modal_proj_title" style="font-size: 1.05rem; font-weight: 800; color: var(--dark); margin-top: 0.1rem;"></div>
+        <div id="log_modal_proj_meta" style="font-size: 0.82rem; color: var(--gray-600); margin-top: 0.25rem;"></div>
+      </div>
+      <div id="projectLogsTimelineContainer" style="max-height: 360px; overflow-y: auto; padding-right: 0.25rem;"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" data-modal-close>Close</button>
+    </div>
+  </div>
 </div>
 
 <!-- View Program / Project Complete Details Modal -->
@@ -462,11 +618,118 @@ include_once __DIR__ . '/../includes/header.php';
 <script>
 const ALL_PROJECTS = <?= json_encode($projects) ?>;
 const PROJECT_TASKS_MAP = <?= json_encode($tasks_by_project) ?>;
+const PROJECT_LOGS_MAP = <?= json_encode($project_logs_by_project) ?>;
 
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str == null ? '' : String(str);
   return div.innerHTML;
+}
+
+function switchProjectTab(tabName) {
+  const btns = document.querySelectorAll('.user-tabs-nav .user-tab-btn');
+  const panes = document.querySelectorAll('.user-tab-pane');
+  btns.forEach(btn => btn.classList.remove('active'));
+  panes.forEach(pane => pane.classList.remove('active'));
+
+  const tabInput = document.getElementById('projFilterTabInput');
+  if (tabInput) tabInput.value = tabName;
+
+  if (tabName === 'logs') {
+    if (btns[1]) btns[1].classList.add('active');
+    const logPane = document.getElementById('tab-logs');
+    if (logPane) logPane.classList.add('active');
+  } else {
+    if (btns[0]) btns[0].classList.add('active');
+    const projPane = document.getElementById('tab-projects');
+    if (projPane) projPane.classList.add('active');
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set('tab', tabName);
+  history.replaceState(null, '', url.toString());
+}
+
+function openProjectLogsModal(projId) {
+  const modal = document.getElementById('viewProjectLogsModal');
+  if (!modal) return;
+
+  const proj = ALL_PROJECTS.find(p => parseInt(p.id, 10) === parseInt(projId, 10));
+  const titleEl = document.getElementById('log_modal_proj_title');
+  const metaEl = document.getElementById('log_modal_proj_meta');
+  const container = document.getElementById('projectLogsTimelineContainer');
+
+  if (proj) {
+    titleEl.textContent = proj.title;
+    metaEl.textContent = 'Status: ' + proj.status + ' • Progress: ' + (proj.progress_percent ?? 0) + '%';
+  } else {
+    titleEl.textContent = 'Project #' + projId;
+    metaEl.textContent = '';
+  }
+
+  const logs = PROJECT_LOGS_MAP[projId] || [];
+  if (logs.length === 0) {
+    container.innerHTML = '<div style="text-align: center; padding: 1.5rem; color: var(--gray-500);">No activity logs recorded for this project yet.</div>';
+  } else {
+    const initialLimit = logs.length === 2 ? 1 : 2;
+    const totalLogs = logs.length;
+    const hiddenCount = Math.max(0, totalLogs - initialLimit);
+
+    let html = `<div class="log-stepper-container"><div class="log-stepper" data-initial-limit="${initialLimit}">`;
+    logs.forEach((log, index) => {
+      let stepClass = '';
+      let badgeClass = 'badge-in-progress';
+      let iconClass = 'fa-pen';
+      if (log.action_type === 'Created') {
+        stepClass = 'step-success';
+        badgeClass = 'badge-accomplished';
+        iconClass = 'fa-plus';
+      } else if (log.action_type === 'Progress Updated') {
+        stepClass = 'step-info';
+        badgeClass = 'badge-todo';
+        iconClass = 'fa-chart-line';
+      }
+
+      const hiddenClass = index >= initialLimit ? 'log-step-hidden' : '';
+      const lastVisibleClass = (index === initialLimit - 1 && totalLogs > initialLimit) ? 'log-step-last-visible' : '';
+
+      html += `
+        <div class="log-step ${stepClass} ${hiddenClass} ${lastVisibleClass}">
+          <div class="log-step-node">
+            <i class="fa-solid ${iconClass}"></i>
+          </div>
+          <div class="log-step-content">
+            <div class="log-step-header">
+              <div class="log-step-title">
+                <span class="badge ${badgeClass}" style="font-size: 0.7rem;">${escapeHtml(log.action_type)}</span>
+                <span>${escapeHtml(log.user_name)}</span>
+                <span class="log-step-role">(${escapeHtml(log.user_role)})</span>
+              </div>
+              <div class="log-step-time">
+                <i class="fa-regular fa-clock"></i> ${escapeHtml(log.formatted_time || log.created_at)}
+              </div>
+            </div>
+            <div class="log-step-body">${escapeHtml(log.log_details)}</div>
+          </div>
+        </div>
+      `;
+    });
+    html += '</div>';
+    if (hiddenCount > 0) {
+      html += `
+        <div class="log-stepper-toggle-wrap">
+          <button type="button" class="log-stepper-toggle-btn" data-expanded="false" onclick="toggleStepperLogs(this)">
+            <i class="fa-solid fa-chevron-down"></i> Show More (${hiddenCount} more ${hiddenCount === 1 ? 'log' : 'logs'})
+          </button>
+        </div>
+      `;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  modal.classList.add('active');
+  document.body.style.overflow = 'hidden';
 }
 
 function formatReadableDate(dateStr) {

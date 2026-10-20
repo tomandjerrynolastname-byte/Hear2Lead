@@ -234,17 +234,26 @@ $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $tasks = $stmt->fetchAll();
 
+$active_tab = (isset($_GET['tab']) && $_GET['tab'] === 'logs') ? 'logs' : 'tasks';
+
 // Fetch Task Activity Logs for displayed tasks
 $task_logs_by_task = [];
+$all_task_logs = [];
 if (!empty($tasks)) {
     $task_ids = array_map(function($t) { return intval($t['id']); }, $tasks);
     $placeholders = implode(',', array_fill(0, count($task_ids), '?'));
-    $stmt_logs = $pdo->prepare("SELECT * FROM task_logs WHERE task_id IN ($placeholders) ORDER BY created_at DESC, id DESC");
+    $stmt_logs = $pdo->prepare("SELECT tl.*, t.title as task_title, t.status as task_status, o.acronym as org_acronym
+                                FROM task_logs tl
+                                JOIN tasks t ON tl.task_id = t.id
+                                LEFT JOIN organizations o ON t.org_id = o.id
+                                WHERE tl.task_id IN ($placeholders)
+                                ORDER BY tl.created_at DESC, tl.id DESC");
     $stmt_logs->execute($task_ids);
     foreach ($stmt_logs->fetchAll() as $log) {
         $tid = intval($log['task_id']);
         $log['formatted_time'] = date('M d, Y • g:i:s A', strtotime($log['created_at']));
         $task_logs_by_task[$tid][] = $log;
+        $all_task_logs[] = $log;
     }
 }
 
@@ -477,6 +486,7 @@ include_once __DIR__ . '/../includes/header.php';
 <!-- Filter Bar -->
 <div class="filter-bar">
   <form method="GET" action="tasks.php" style="display: flex; gap: 1rem; align-items: center; width: 100%; flex-wrap: wrap;">
+    <input type="hidden" name="tab" id="taskFilterTabInput" value="<?= htmlspecialchars($active_tab) ?>">
     <?php if ($is_admin): ?>
       <div class="filter-group">
         <label class="form-label" style="margin: 0;">Organization:</label>
@@ -513,12 +523,27 @@ include_once __DIR__ . '/../includes/header.php';
     </div>
 
     <?php if (!empty($filter_status) || !empty($filter_priority) || ($is_admin && $filter_org > 0)): ?>
-      <a href="tasks.php" class="btn btn-secondary btn-sm"><i class="fa-solid fa-rotate-left"></i> Reset Filter</a>
+      <a href="tasks.php?tab=<?= htmlspecialchars($active_tab) ?>" class="btn btn-secondary btn-sm"><i class="fa-solid fa-rotate-left"></i> Reset Filter</a>
     <?php endif; ?>
   </form>
 </div>
 
-<!-- Task Table -->
+<!-- Tab Panel Navigation -->
+<div class="user-tabs-nav">
+  <button type="button" class="user-tab-btn <?= $active_tab === 'tasks' ? 'active' : '' ?>" onclick="switchTaskTab('tasks')">
+    <i class="fa-solid fa-list-check"></i>
+    <span>Task Assignments & Organizer</span>
+    <span class="user-tab-badge"><?= count($tasks) ?></span>
+  </button>
+  <button type="button" class="user-tab-btn <?= $active_tab === 'logs' ? 'active' : '' ?>" onclick="switchTaskTab('logs')">
+    <i class="fa-solid fa-clock-rotate-left"></i>
+    <span>Task Activity Logs</span>
+    <span class="user-tab-badge"><?= count($all_task_logs) ?></span>
+  </button>
+</div>
+
+<!-- TAB 1: Task Table -->
+<div class="user-tab-pane <?= $active_tab === 'tasks' ? 'active' : '' ?>" id="tab-tasks">
 <?php
 $col_count = 7;
 if ($is_admin && $filter_org === 0) $col_count++;
@@ -615,7 +640,7 @@ if ($is_admin && $filter_org === 0) $col_count++;
                   <button type="button" class="btn btn-secondary btn-sm" onclick="openEditTaskModal(<?= intval($task['id']) ?>)" title="Edit Task">
                     <i class="fa-solid fa-pen"></i> Edit
                   </button>
-                  <form method="POST" action="tasks.php" onsubmit="return confirm('Are you sure you want to delete this task?');" style="display: inline;">
+                  <form method="POST" action="tasks.php" onsubmit="return confirmDeleteSwal(event, 'Are you sure you want to delete this task?', 'Delete Task?');" style="display: inline;">
                     <input type="hidden" name="action" value="delete_task">
                     <input type="hidden" name="task_id" value="<?= $task['id'] ?>">
                     <button type="submit" class="btn btn-danger btn-sm" title="Delete Task"><i class="fa-solid fa-trash"></i></button>
@@ -628,6 +653,64 @@ if ($is_admin && $filter_org === 0) $col_count++;
       <?php endif; ?>
     </tbody>
   </table>
+</div>
+</div>
+
+<!-- TAB 2: Task Activity Logs Pane -->
+<div class="user-tab-pane <?= $active_tab === 'logs' ? 'active' : '' ?>" id="tab-logs">
+  <div class="panel">
+    <div class="panel-header">
+      <span><i class="fa-solid fa-clock-rotate-left" style="color: var(--primary);"></i> Task Creation, Assignment & Status Activity Logs</span>
+      <span style="font-size: 0.85rem; color: var(--gray-500);"><?= count($all_task_logs) ?> Total Entries</span>
+    </div>
+
+    <?php if (empty($all_task_logs)): ?>
+      <div style="text-align: center; padding: 2.5rem; color: var(--gray-500);">
+        <i class="fa-solid fa-clock-rotate-left" style="font-size: 2.2rem; color: var(--gray-400); margin-bottom: 0.5rem; display: block;"></i>
+        No task activity logs recorded for the selected criteria.
+      </div>
+    <?php else: ?>
+      <div class="table-container" style="box-shadow: none; border: none; margin: 0;">
+        <table class="table">
+          <thead>
+            <tr>
+              <?php if ($is_admin && $filter_org === 0): ?>
+                <th>Org</th>
+              <?php endif; ?>
+              <th>Task Title</th>
+              <th>Action</th>
+              <th>Logged By</th>
+              <th>Activity & Change Details</th>
+              <th>Timestamp</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($all_task_logs as $log):
+              $action_badge = $log['action_type'] === 'Created' ? 'badge-accomplished' : ($log['action_type'] === 'Status Updated' ? 'badge-todo' : 'badge-in-progress');
+            ?>
+              <tr>
+                <?php if ($is_admin && $filter_org === 0): ?>
+                  <td><span class="badge badge-planning"><strong><?= htmlspecialchars($log['org_acronym'] ?? 'ORG') ?></strong></span></td>
+                <?php endif; ?>
+                <td>
+                  <strong style="color: var(--dark);"><?= htmlspecialchars($log['task_title'] ?? ('Task #' . $log['task_id'])) ?></strong>
+                </td>
+                <td><span class="badge <?= $action_badge ?>"><?= htmlspecialchars($log['action_type']) ?></span></td>
+                <td>
+                  <div style="font-weight: 700; color: var(--dark); font-size: 0.88rem;"><?= htmlspecialchars($log['user_name']) ?></div>
+                  <div style="font-size: 0.75rem; color: var(--gray-500);"><?= htmlspecialchars($log['user_role']) ?></div>
+                </td>
+                <td style="font-size: 0.86rem; color: var(--gray-800); max-width: 420px;"><?= htmlspecialchars($log['log_details']) ?></td>
+                <td style="white-space: nowrap; font-size: 0.8rem; color: var(--gray-600);">
+                  <i class="fa-regular fa-clock"></i> <?= htmlspecialchars($log['formatted_time']) ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    <?php endif; ?>
+  </div>
 </div>
 
 <!-- View Task Activity Logs Modal (Accessible to view logs with timestamps) -->
@@ -1109,6 +1192,30 @@ function openEditTaskModal(taskOrId) {
 }
 
 window.openTaskEditModal = openEditTaskModal;
+
+function switchTaskTab(tabName) {
+  const btns = document.querySelectorAll('.user-tabs-nav .user-tab-btn');
+  const panes = document.querySelectorAll('.user-tab-pane');
+  btns.forEach(btn => btn.classList.remove('active'));
+  panes.forEach(pane => pane.classList.remove('active'));
+
+  const tabInput = document.getElementById('taskFilterTabInput');
+  if (tabInput) tabInput.value = tabName;
+
+  if (tabName === 'logs') {
+    if (btns[1]) btns[1].classList.add('active');
+    const logPane = document.getElementById('tab-logs');
+    if (logPane) logPane.classList.add('active');
+  } else {
+    if (btns[0]) btns[0].classList.add('active');
+    const taskPane = document.getElementById('tab-tasks');
+    if (taskPane) taskPane.classList.add('active');
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set('tab', tabName);
+  history.replaceState(null, '', url.toString());
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   const createOrgInput = document.getElementById('create_task_org_id');

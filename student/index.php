@@ -187,7 +187,7 @@ $projects = $pdo->query("SELECT p.*, o.name as org_name, o.acronym FROM projects
 
 <!-- Overview Accomplishment Complete Details Modal -->
 <div class="modal-backdrop" id="overviewAccModal">
-  <div class="modal-card">
+  <div class="modal-card" style="max-width: 720px;">
     <div class="modal-header">
       <h3 style="font-size: 1.2rem; font-weight: 700; color: var(--dark);">
         <i class="fa-solid fa-trophy" style="color: var(--warning);"></i> Accomplishment Complete Details
@@ -205,6 +205,23 @@ $projects = $pdo->query("SELECT p.*, o.name as org_name, o.acronym FROM projects
         <div style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: var(--gray-500);">Date Accomplished</div>
         <div id="ov_acc_date" style="font-size: 0.92rem; font-weight: 700; color: var(--dark); margin-top: 0.2rem;"></div>
       </div>
+
+      <!-- Attachment Preview -->
+      <div id="ov_acc_att_section" style="display: none; margin-bottom: 1rem;">
+        <div id="ov_acc_imgs_wrap" style="display: none; margin-bottom: 0.85rem;">
+          <div style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; color: var(--gray-500); margin-bottom: 0.45rem;">
+            <i class="fa-regular fa-images" style="color: var(--primary);"></i> Attached Photos
+          </div>
+          <div id="ov_acc_imgs_grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.65rem;"></div>
+        </div>
+        <div id="ov_acc_pdfs_wrap" style="display: none;">
+          <div style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; color: var(--gray-500); margin-bottom: 0.45rem;">
+            <i class="fa-solid fa-file-pdf" style="color: #dc2626;"></i> Attached PDF Documents
+          </div>
+          <div id="ov_acc_pdfs_list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+        </div>
+      </div>
+
       <div style="margin-bottom: 1rem;">
         <div style="font-size: 0.78rem; font-weight: 700; text-transform: uppercase; color: var(--gray-500); margin-bottom: 0.4rem;">Full Description</div>
         <div id="ov_acc_desc" style="background: var(--cream-light); border: 1px solid var(--gray-200); border-radius: var(--radius-sm); padding: 1rem; font-size: 0.95rem; color: var(--gray-800); line-height: 1.65; white-space: pre-wrap;"></div>
@@ -295,6 +312,68 @@ function openOverviewAccModal(accId) {
   document.getElementById('ov_acc_org_name').textContent = acc.org_name || '';
   document.getElementById('ov_acc_date').textContent = formatOvDate(acc.date_accomplished);
   document.getElementById('ov_acc_desc').textContent = acc.description || 'No description provided.';
+
+  const attSection = document.getElementById('ov_acc_att_section');
+  const imgsWrap = document.getElementById('ov_acc_imgs_wrap');
+  const imgsGrid = document.getElementById('ov_acc_imgs_grid');
+  const pdfsWrap = document.getElementById('ov_acc_pdfs_wrap');
+  const pdfsList = document.getElementById('ov_acc_pdfs_list');
+
+  let atts = [];
+  if (acc.attachments_json) {
+    try {
+      const parsed = JSON.parse(acc.attachments_json);
+      if (Array.isArray(parsed)) atts = parsed;
+    } catch (e) {}
+  }
+  if (atts.length === 0 && acc.attachment_file) {
+    const ext = acc.attachment_file.split('.').pop().toLowerCase();
+    atts.push({
+      file: acc.attachment_file,
+      type: acc.attachment_type || (ext === 'pdf' ? 'pdf' : 'image'),
+      name: acc.attachment_name || acc.attachment_file
+    });
+  }
+
+  const images = atts.filter(a => a.type === 'image');
+  const pdfs = atts.filter(a => a.type === 'pdf');
+
+  if (images.length > 0 || pdfs.length > 0) {
+    attSection.style.display = 'block';
+    if (images.length > 0) {
+      imgsWrap.style.display = 'block';
+      imgsGrid.innerHTML = images.map(img => {
+        const u = '../assets/uploads/accomplishments/' + encodeURIComponent(img.file);
+        return `<a href="${u}" target="_blank" rel="noopener" style="display: block; border-radius: 8px; overflow: hidden; border: 1px solid var(--gray-200); background: var(--gray-100); height: 140px;">
+          <img src="${u}" alt="" style="width: 100%; height: 100%; object-fit: cover; display: block;">
+        </a>`;
+      }).join('');
+    } else {
+      imgsWrap.style.display = 'none';
+      imgsGrid.innerHTML = '';
+    }
+
+    if (pdfs.length > 0) {
+      pdfsWrap.style.display = 'block';
+      pdfsList.innerHTML = pdfs.map(p => {
+        const u = '../assets/uploads/accomplishments/' + encodeURIComponent(p.file);
+        const div = document.createElement('div');
+        div.textContent = p.name || p.file;
+        const safeName = div.innerHTML;
+        return `<div style="display: flex; align-items: center; justify-content: space-between; gap: 0.65rem; padding: 0.55rem 0.8rem; background: #fff5f5; border: 1px solid #fecaca; border-radius: 6px;">
+          <span style="font-size: 0.84rem; font-weight: 700; color: var(--dark); word-break: break-all;"><i class="fa-solid fa-file-pdf" style="color: #dc2626; margin-right: 0.4rem;"></i>${safeName}</span>
+          <a href="${u}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" style="font-size: 0.74rem; flex-shrink: 0;"><i class="fa-solid fa-arrow-up-right-from-square"></i> Open PDF</a>
+        </div>`;
+      }).join('');
+    } else {
+      pdfsWrap.style.display = 'none';
+      pdfsList.innerHTML = '';
+    }
+  } else {
+    attSection.style.display = 'none';
+    imgsWrap.style.display = 'none';
+    pdfsWrap.style.display = 'none';
+  }
 
   const impBox = document.getElementById('ov_acc_impact_box');
   if (acc.impact_summary && acc.impact_summary.trim() !== '') {

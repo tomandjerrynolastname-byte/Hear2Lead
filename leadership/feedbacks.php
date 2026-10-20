@@ -331,7 +331,7 @@ include_once __DIR__ . '/../includes/header.php';
             <button type="button" class="btn btn-primary btn-sm" onclick="openFeedbackReplyModal(<?= intval($fb['id']) ?>)">
               <i class="fa-solid fa-reply"></i> <?= !empty($fb_logs) ? 'Add Another Reply' : 'Respond / Update Status' ?>
             </button>
-            <form method="POST" action="feedbacks.php" onsubmit="return confirm('Are you sure you want to permanently delete this feedback?');" style="display: inline; margin: 0;">
+            <form method="POST" action="feedbacks.php" onsubmit="return confirmDeleteSwal(event, 'Are you sure you want to permanently delete this feedback?', 'Delete Feedback?');" style="display: inline; margin: 0;">
               <input type="hidden" name="action" value="delete_feedback">
               <input type="hidden" name="feedback_id" value="<?= $fb['id'] ?>">
               <button type="submit" class="btn btn-danger btn-sm" title="Delete Feedback"><i class="fa-solid fa-trash"></i></button>

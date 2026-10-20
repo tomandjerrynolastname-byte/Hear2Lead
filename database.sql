@@ -93,6 +93,21 @@ CREATE TABLE IF NOT EXISTS `task_logs` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- --------------------------------------------------------
+-- Table: project_logs (Project Creation & Progress History with Timestamps)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `project_logs` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `project_id` INT NOT NULL,
+  `user_id` INT DEFAULT NULL,
+  `user_name` VARCHAR(100) NOT NULL,
+  `user_role` VARCHAR(50) NOT NULL,
+  `action_type` VARCHAR(50) NOT NULL,
+  `log_details` TEXT NOT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- --------------------------------------------------------
 -- Table: accomplishments
 -- --------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `accomplishments` (
@@ -103,8 +118,27 @@ CREATE TABLE IF NOT EXISTS `accomplishments` (
   `impact_summary` VARCHAR(255) DEFAULT NULL,
   `date_accomplished` DATE NOT NULL,
   `badge_tag` VARCHAR(50) DEFAULT 'Success',
+  `attachment_file` VARCHAR(255) DEFAULT NULL,
+  `attachment_type` VARCHAR(20) DEFAULT NULL,
+  `attachment_name` VARCHAR(255) DEFAULT NULL,
+  `attachments_json` LONGTEXT DEFAULT NULL,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`org_id`) REFERENCES `organizations`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- --------------------------------------------------------
+-- Table: accomplishment_logs (Accomplishment Creation & Edit History with Timestamps)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `accomplishment_logs` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `acc_id` INT NOT NULL,
+  `user_id` INT DEFAULT NULL,
+  `user_name` VARCHAR(100) NOT NULL,
+  `user_role` VARCHAR(50) NOT NULL,
+  `action_type` VARCHAR(50) NOT NULL,
+  `log_details` TEXT NOT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`acc_id`) REFERENCES `accomplishments`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- --------------------------------------------------------

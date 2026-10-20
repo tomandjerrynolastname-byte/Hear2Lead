@@ -41,6 +41,9 @@ $student_lrn = $_SESSION['student_lrn'] ?? '';
   
   <!-- Custom CSS -->
   <link rel="stylesheet" href="../assets/css/style.css?v=<?= @filemtime(__DIR__ . '/../assets/css/style.css') ?: time() ?>">
+
+  <!-- SweetAlert2 -->
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
 <body>
 <!-- Global Page Transition Loader & Progress Bar -->
@@ -75,13 +78,8 @@ $student_lrn = $_SESSION['student_lrn'] ?? '';
       </div>
     </a>
 
-    <!-- Mobile Menu Toggle Button -->
-    <button class="mobile-toggle-btn" aria-label="Toggle navigation menu">
-      <i class="fa-solid fa-bars"></i>
-    </button>
-
     <!-- Navigation Menu -->
-    <nav>
+    <nav class="navbar-nav">
       <ul class="nav-links">
         <?php if ($is_leadership): ?>
           <!-- Leadership Navigation Links -->
@@ -205,6 +203,11 @@ $student_lrn = $_SESSION['student_lrn'] ?? '';
         <?php endif; ?>
       </ul>
     </nav>
+
+    <!-- Mobile Menu Toggle Button -->
+    <button type="button" class="mobile-toggle-btn" aria-label="Toggle navigation menu" aria-expanded="false">
+      <i class="fa-solid fa-bars"></i>
+    </button>
   </div>
 </header>
 

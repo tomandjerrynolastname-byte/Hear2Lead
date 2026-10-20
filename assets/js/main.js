@@ -8,14 +8,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (mobileToggleBtn && navLinks) {
     mobileToggleBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      navLinks.classList.toggle('active');
+      const isOpen = navLinks.classList.toggle('active');
+      mobileToggleBtn.classList.toggle('active', isOpen);
+      mobileToggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
       const icon = mobileToggleBtn.querySelector('i');
       if (icon) {
-        if (navLinks.classList.contains('active')) {
-          icon.className = 'fa-solid fa-xmark';
-        } else {
-          icon.className = 'fa-solid fa-bars';
-        }
+        icon.className = isOpen ? 'fa-solid fa-xmark' : 'fa-solid fa-bars';
       }
     });
 
@@ -23,6 +21,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('click', (e) => {
       if (!navLinks.contains(e.target) && !mobileToggleBtn.contains(e.target)) {
         navLinks.classList.remove('active');
+        mobileToggleBtn.classList.remove('active');
+        mobileToggleBtn.setAttribute('aria-expanded', 'false');
         const icon = mobileToggleBtn.querySelector('i');
         if (icon) icon.className = 'fa-solid fa-bars';
       }
@@ -201,11 +201,67 @@ function initPageLoader() {
     setTimeout(hideLoader, 6000);
   });
 
-  // Intercept form submissions with smooth display delay
+  // Global helper for SweetAlert2 delete confirmation on forms
+  window.confirmDeleteSwal = function (e, message, title = 'Confirm Deletion') {
+    if (e && e.target) {
+      const form = e.target.closest('form') || e.target;
+      if (form.dataset.swalConfirmed === 'true') {
+        return true;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (typeof Swal !== 'undefined') {
+        Swal.fire({
+          title: title,
+          text: message || 'Are you sure you want to delete this item? This action cannot be undone.',
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonColor: '#dc2626',
+          cancelButtonColor: '#64748b',
+          confirmButtonText: '<i class="fa-solid fa-trash-can"></i> Yes, Delete',
+          cancelButtonText: 'Cancel',
+          reverseButtons: true,
+          focusCancel: true
+        }).then((result) => {
+          if (result.isConfirmed) {
+            form.dataset.swalConfirmed = 'true';
+            form.dataset.submitting = 'true';
+            showLoader();
+            setTimeout(() => {
+              form.submit();
+            }, 400);
+          }
+        });
+      } else {
+        if (window.confirm(message || 'Are you sure you want to delete this item?')) {
+          form.dataset.swalConfirmed = 'true';
+          form.dataset.submitting = 'true';
+          showLoader();
+          form.submit();
+        }
+      }
+      return false;
+    }
+    return false;
+  };
+
+  // Intercept form submissions with smooth display delay & SweetAlert2 delete guard
   document.addEventListener('submit', (e) => {
     const form = e.target;
+    if (e.defaultPrevented) return;
     if (form.getAttribute('target') === '_blank') return;
     if (form.dataset.submitting === 'true') return;
+
+    // Automatically intercept any delete form if not yet confirmed via SweetAlert2
+    const actionInput = form.querySelector('input[name="action"]');
+    const isDeleteAction = actionInput && actionInput.value && actionInput.value.indexOf('delete_') === 0;
+    if ((form.hasAttribute('data-confirm-delete') || isDeleteAction) && form.dataset.swalConfirmed !== 'true') {
+      const msg = form.getAttribute('data-confirm-delete') || 'Are you sure you want to delete this item? This action cannot be undone.';
+      const title = form.getAttribute('data-confirm-title') || 'Confirm Deletion';
+      window.confirmDeleteSwal(e, msg, title);
+      return;
+    }
 
     // Check HTML5 validity before preventing submit
     if (form.checkValidity && !form.checkValidity()) {

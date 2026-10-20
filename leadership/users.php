@@ -454,7 +454,7 @@ include_once __DIR__ . '/../includes/header.php';
                     <i class="fa-solid fa-user-pen"></i> Edit
                   </button>
                   <?php if (!$is_self && ($is_admin || $user['role'] !== 'Admin')): ?>
-                    <form method="POST" action="users.php" onsubmit="return confirm('Are you sure you want to delete officer account \'<?= htmlspecialchars($user['username']) ?>\'?');" style="display: inline;">
+                    <form method="POST" action="users.php" onsubmit="return confirmDeleteSwal(event, 'Are you sure you want to delete officer account \'<?= htmlspecialchars($user['username'], ENT_QUOTES) ?>\'?', 'Delete Officer Account?');" style="display: inline;">
                       <input type="hidden" name="action" value="delete_user">
                       <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
                       <button type="submit" class="btn btn-danger btn-sm" title="Delete User"><i class="fa-solid fa-trash"></i></button>
@@ -538,7 +538,7 @@ include_once __DIR__ . '/../includes/header.php';
                     <button class="btn btn-secondary btn-sm" onclick='openStudentEditModal(<?= json_encode($student) ?>)' title="Edit Student">
                       <i class="fa-solid fa-pen-to-square"></i> Edit
                     </button>
-                    <form method="POST" action="users.php" onsubmit="return confirm('Are you sure you want to delete student account \'<?= htmlspecialchars($student['full_name']) ?>\' (LRN: <?= htmlspecialchars($student['student_lrn']) ?>)?');" style="display: inline;">
+                    <form method="POST" action="users.php" onsubmit="return confirmDeleteSwal(event, 'Are you sure you want to delete student account \'<?= htmlspecialchars($student['full_name'], ENT_QUOTES) ?>\' (LRN: <?= htmlspecialchars($student['student_lrn'], ENT_QUOTES) ?>)?', 'Delete Student Account?');" style="display: inline;">
                       <input type="hidden" name="action" value="delete_student">
                       <input type="hidden" name="student_id" value="<?= $student['id'] ?>">
                       <button type="submit" class="btn btn-danger btn-sm" title="Delete Student"><i class="fa-solid fa-trash"></i></button>

@@ -285,7 +285,7 @@ include_once __DIR__ . '/../includes/header.php';
               <i class="fa-solid fa-pen"></i> Edit
             </button>
             <?php if (!$is_my_org): ?>
-              <form method="POST" action="organizations.php" onsubmit="return confirm('Are you sure you want to delete organization \'<?= htmlspecialchars($org['name']) ?>\'? All associated officers and records will also be removed!');" style="display: inline;">
+              <form method="POST" action="organizations.php" onsubmit="return confirmDeleteSwal(event, 'Are you sure you want to delete organization \'<?= htmlspecialchars($org['name'], ENT_QUOTES) ?>\'? All associated officers and records will also be removed!', 'Delete Organization?');" style="display: inline;">
                 <input type="hidden" name="action" value="delete_org">
                 <input type="hidden" name="org_id" value="<?= $org['id'] ?>">
                 <button type="submit" class="btn btn-danger btn-sm" title="Delete Organization"><i class="fa-solid fa-trash"></i></button>

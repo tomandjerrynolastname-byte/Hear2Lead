@@ -91,6 +91,50 @@ function getDBConnection() {
                 LEFT JOIN `task_logs` tl ON tl.task_id = t.id
                 WHERE tl.id IS NULL");
 
+            // Ensure project_logs table exists for project creation/update history
+            $pdo->exec("CREATE TABLE IF NOT EXISTS `project_logs` (
+                `id` INT AUTO_INCREMENT PRIMARY KEY,
+                `project_id` INT NOT NULL,
+                `user_id` INT DEFAULT NULL,
+                `user_name` VARCHAR(100) NOT NULL,
+                `user_role` VARCHAR(50) NOT NULL,
+                `action_type` VARCHAR(50) NOT NULL,
+                `log_details` TEXT NOT NULL,
+                `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (`project_id`) REFERENCES `projects`(`id`) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            // Seed initial creation log for any existing projects without logs
+            $pdo->exec("INSERT INTO `project_logs` (`project_id`, `user_id`, `user_name`, `user_role`, `action_type`, `log_details`, `created_at`)
+                SELECT p.id, NULL, 'System / Leadership', 'Leader', 'Created',
+                       CONCAT('Project created with title \"', p.title, '\", status ''', p.status, ''', progress ', p.progress_percent, '%.'),
+                       p.created_at
+                FROM `projects` p
+                LEFT JOIN `project_logs` pl ON pl.project_id = p.id
+                WHERE pl.id IS NULL");
+
+            // Ensure accomplishment_logs table exists for accomplishment creation/update history
+            $pdo->exec("CREATE TABLE IF NOT EXISTS `accomplishment_logs` (
+                `id` INT AUTO_INCREMENT PRIMARY KEY,
+                `acc_id` INT NOT NULL,
+                `user_id` INT DEFAULT NULL,
+                `user_name` VARCHAR(100) NOT NULL,
+                `user_role` VARCHAR(50) NOT NULL,
+                `action_type` VARCHAR(50) NOT NULL,
+                `log_details` TEXT NOT NULL,
+                `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (`acc_id`) REFERENCES `accomplishments`(`id`) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            // Seed initial creation log for any existing accomplishments without logs
+            $pdo->exec("INSERT INTO `accomplishment_logs` (`acc_id`, `user_id`, `user_name`, `user_role`, `action_type`, `log_details`, `created_at`)
+                SELECT a.id, NULL, 'System / Leadership', 'Leader', 'Created',
+                       CONCAT('Accomplishment published with title \"', a.title, '\", tag ''', IFNULL(a.badge_tag, 'Completed Event'), ''', date accomplished ', DATE_FORMAT(a.date_accomplished, '%b %d, %Y'), '.'),
+                       a.created_at
+                FROM `accomplishments` a
+                LEFT JOIN `accomplishment_logs` al ON al.acc_id = a.id
+                WHERE al.id IS NULL");
+
             // Ensure student_id column exists in feedbacks table
             $colCheck = $pdo->query("SHOW COLUMNS FROM `feedbacks` LIKE 'student_id'")->rowCount();
             if ($colCheck === 0) {
@@ -128,6 +172,30 @@ function getDBConnection() {
                            DATE_ADD(IFNULL(f.responded_at, NOW()), INTERVAL 15 MINUTE)
                     FROM `feedbacks` f
                     WHERE EXISTS (SELECT 1 FROM `feedback_logs` fl WHERE fl.feedback_id = f.id AND fl.status != 'Student Reply')");
+            }
+
+            // Ensure attachment columns exist in accomplishments table for image or PDF uploads
+            $accFileCol = $pdo->query("SHOW COLUMNS FROM `accomplishments` LIKE 'attachment_file'")->rowCount();
+            if ($accFileCol === 0) {
+                $pdo->exec("ALTER TABLE `accomplishments`
+                    ADD COLUMN `attachment_file` VARCHAR(255) DEFAULT NULL AFTER `badge_tag`,
+                    ADD COLUMN `attachment_type` VARCHAR(20) DEFAULT NULL AFTER `attachment_file`,
+                    ADD COLUMN `attachment_name` VARCHAR(255) DEFAULT NULL AFTER `attachment_type`");
+            }
+
+            $accJsonCol = $pdo->query("SHOW COLUMNS FROM `accomplishments` LIKE 'attachments_json'")->rowCount();
+            if ($accJsonCol === 0) {
+                $pdo->exec("ALTER TABLE `accomplishments` ADD COLUMN `attachments_json` LONGTEXT DEFAULT NULL AFTER `attachment_name`");
+                // Migrate any existing single attachment into attachments_json array
+                $legacyAccs = $pdo->query("SELECT id, attachment_file, attachment_type, attachment_name FROM `accomplishments` WHERE attachment_file IS NOT NULL AND attachment_file != '' AND (attachments_json IS NULL OR attachments_json = '')")->fetchAll();
+                $migStmt = $pdo->prepare("UPDATE `accomplishments` SET `attachments_json` = ? WHERE `id` = ?");
+                foreach ($legacyAccs as $row) {
+                    $ext = strtolower(pathinfo($row['attachment_file'], PATHINFO_EXTENSION));
+                    $t = !empty($row['attachment_type']) ? $row['attachment_type'] : (($ext === 'pdf') ? 'pdf' : 'image');
+                    $n = !empty($row['attachment_name']) ? $row['attachment_name'] : $row['attachment_file'];
+                    $json = json_encode([['file' => $row['attachment_file'], 'type' => $t, 'name' => $n]]);
+                    $migStmt->execute([$json, $row['id']]);
+                }
             }
         } catch (PDOException $e) {
             die("<div style='padding: 20px; font-family: sans-serif; background: #fee2e2; border: 1px solid #f87171; color: #991b1b; border-radius: 8px; margin: 20px;'>
