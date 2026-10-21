@@ -4,7 +4,12 @@ require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/auth_check.php';
 
 $current_role = $_SESSION['user_role'] ?? 'Officer';
-$is_admin = ($current_role === 'Admin');
+$role_perms = getRolePermissions($current_role, $pdo);
+$is_admin = !empty($role_perms['is_admin']);
+if (empty($role_perms['can_view_reports'])) {
+    header("Location: dashboard.php?error=" . urlencode("Access denied. Your role ($current_role) does not have access to Performance Reports."));
+    exit;
+}
 $current_org_id = intval($_SESSION['org_id']);
 $selected_org_id = $is_admin ? (isset($_GET['org_id']) ? intval($_GET['org_id']) : 0) : $current_org_id;
 

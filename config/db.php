@@ -197,6 +197,71 @@ function getDBConnection() {
                     $migStmt->execute([$json, $row['id']]);
                 }
             }
+            // Ensure users.role is VARCHAR(100) to support dynamic/custom roles beyond fixed ENUM
+            $pdo->exec("ALTER TABLE `users` MODIFY COLUMN `role` VARCHAR(100) NOT NULL DEFAULT 'Officer'");
+
+            // Ensure user_roles table exists for Dynamic / Custom Role Library & System Accessibility
+            $pdo->exec("CREATE TABLE IF NOT EXISTS `user_roles` (
+                `id` INT AUTO_INCREMENT PRIMARY KEY,
+                `role_name` VARCHAR(100) NOT NULL UNIQUE,
+                `base_role` VARCHAR(50) NOT NULL DEFAULT 'Officer',
+                `description` VARCHAR(255) DEFAULT NULL,
+                `badge_style` VARCHAR(50) NOT NULL DEFAULT 'badge-role-officer',
+                `can_manage_users` TINYINT(1) NOT NULL DEFAULT 0,
+                `can_manage_tasks` TINYINT(1) NOT NULL DEFAULT 0,
+                `can_manage_projects` TINYINT(1) NOT NULL DEFAULT 1,
+                `can_manage_accomplishments` TINYINT(1) NOT NULL DEFAULT 1,
+                `can_manage_feedbacks` TINYINT(1) NOT NULL DEFAULT 1,
+                `can_view_reports` TINYINT(1) NOT NULL DEFAULT 1,
+                `can_manage_orgs` TINYINT(1) NOT NULL DEFAULT 0,
+                `is_system` TINYINT(1) NOT NULL DEFAULT 0,
+                `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            // Seed default system roles if user_roles is empty
+            $roleCount = intval($pdo->query("SELECT COUNT(*) FROM `user_roles`")->fetchColumn());
+            if ($roleCount === 0) {
+                $defaultRoles = [
+                    ['Admin', 'Admin', 'Full system-wide administrator across all student organizations, student accounts, and role library.', 'badge-role-admin', 1, 1, 1, 1, 1, 1, 1, 1],
+                    ['President', 'President', 'Chief executive leader of an organization. Can manage organization officers and assign/manage tasks.', 'badge-role-president', 1, 1, 1, 1, 1, 1, 0, 1],
+                    ['Vice President', 'Vice President', 'Co-executive leader of an organization. Can manage organization officers and assign/manage tasks.', 'badge-role-vp', 1, 1, 1, 1, 1, 1, 0, 1],
+                    ['Secretary', 'Secretary', 'Organization secretary handling documentation, projects, accomplishments, feedbacks, and reports.', 'badge-role-secretary', 0, 0, 1, 1, 1, 1, 0, 1],
+                    ['Treasurer', 'Treasurer', 'Organization treasurer handling financial records, projects, accomplishments, feedbacks, and reports.', 'badge-role-treasurer', 0, 0, 1, 1, 1, 1, 0, 1],
+                    ['Officer', 'Officer', 'General organization officer with access to assigned tasks, projects, accomplishments, feedbacks, and reports.', 'badge-role-officer', 0, 0, 1, 1, 1, 1, 0, 1],
+                ];
+                $insRole = $pdo->prepare("INSERT IGNORE INTO `user_roles` (`role_name`, `base_role`, `description`, `badge_style`, `can_manage_users`, `can_manage_tasks`, `can_manage_projects`, `can_manage_accomplishments`, `can_manage_feedbacks`, `can_view_reports`, `can_manage_orgs`, `is_system`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                foreach ($defaultRoles as $dr) {
+                    $insRole->execute($dr);
+                }
+            }
+
+            // Ensure login_logs table exists for Header Notifications (Who Logged In)
+            $pdo->exec("CREATE TABLE IF NOT EXISTS `login_logs` (
+                `id` INT AUTO_INCREMENT PRIMARY KEY,
+                `account_type` VARCHAR(20) NOT NULL DEFAULT 'Officer',
+                `account_id` INT DEFAULT NULL,
+                `org_id` INT DEFAULT NULL,
+                `org_acronym` VARCHAR(30) DEFAULT NULL,
+                `user_name` VARCHAR(100) NOT NULL,
+                `user_role` VARCHAR(100) NOT NULL,
+                `log_details` VARCHAR(255) NOT NULL,
+                `ip_address` VARCHAR(60) DEFAULT NULL,
+                `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            // Seed initial login log notifications if table is empty
+            $loginLogCount = intval($pdo->query("SELECT COUNT(*) FROM `login_logs`")->fetchColumn());
+            if ($loginLogCount === 0) {
+                $pdo->exec("INSERT INTO `login_logs` (`account_type`, `account_id`, `org_id`, `org_acronym`, `user_name`, `user_role`, `log_details`, `ip_address`, `created_at`)
+                    SELECT 'Officer', u.id, u.org_id, o.acronym, u.full_name, u.role,
+                           CONCAT(u.full_name, ' (', u.role, ') logged in to the ', o.acronym, ' Leadership Portal.'),
+                           '127.0.0.1',
+                           DATE_SUB(NOW(), INTERVAL (u.id * 12) MINUTE)
+                    FROM `users` u
+                    JOIN `organizations` o ON u.org_id = o.id
+                    ORDER BY u.id ASC
+                    LIMIT 5");
+            }
         } catch (PDOException $e) {
             die("<div style='padding: 20px; font-family: sans-serif; background: #fee2e2; border: 1px solid #f87171; color: #991b1b; border-radius: 8px; margin: 20px;'>
                 <h3>Database Connection Error</h3>
@@ -209,6 +274,378 @@ function getDBConnection() {
     return $pdo;
 }
 
-// Global PDO instance helper
+/**
+ * Record a login event in login_logs for header notifications
+ */
+function recordLoginNotification(string $accountType, int $accountId, ?int $orgId, string $orgAcronym, string $userName, string $userRole, string $details, ?PDO $pdo = null): void {
+    if ($pdo === null) {
+        $pdo = getDBConnection();
+    }
+    try {
+        $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+        $stmt = $pdo->prepare("INSERT INTO `login_logs` (`account_type`, `account_id`, `org_id`, `org_acronym`, `user_name`, `user_role`, `log_details`, `ip_address`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute([$accountType, $accountId, $orgId, $orgAcronym, $userName, $userRole, $details, $ip]);
+    } catch (PDOException $e) {
+        // Fail silently if table is not ready
+    }
+}
+
+/**
+ * Fetch all roles from the Dynamic Role Library ordered by hierarchy
+ */
+function getAllUserRoles(?PDO $pdo = null): array {
+    if ($pdo === null) {
+        $pdo = getDBConnection();
+    }
+    try {
+        $stmt = $pdo->query("SELECT * FROM `user_roles` ORDER BY 
+            CASE `base_role`
+                WHEN 'Admin' THEN 1
+                WHEN 'President' THEN 2
+                WHEN 'Vice President' THEN 3
+                WHEN 'Secretary' THEN 4
+                WHEN 'Treasurer' THEN 5
+                ELSE 6
+            END ASC,
+            `is_system` DESC,
+            `role_name` ASC");
+        return $stmt->fetchAll();
+    } catch (PDOException $e) {
+        return [];
+    }
+}
+
+/**
+ * Resolve effective system permissions and base role equivalent for any role name (built-in or custom)
+ */
+function getRolePermissions(string $roleName, ?PDO $pdo = null): array {
+    static $cache = [];
+    $roleKey = strtolower(trim($roleName ?: 'Officer'));
+    if (isset($cache[$roleKey])) {
+        return $cache[$roleKey];
+    }
+
+    if ($pdo === null) {
+        $pdo = getDBConnection();
+    }
+
+    $row = null;
+    try {
+        $stmt = $pdo->prepare("SELECT * FROM `user_roles` WHERE LOWER(`role_name`) = LOWER(?) LIMIT 1");
+        $stmt->execute([trim($roleName)]);
+        $row = $stmt->fetch();
+    } catch (PDOException $e) {
+        $row = null;
+    }
+
+    if ($row) {
+        $base = $row['base_role'] ?: 'Officer';
+        $isAdmin = (strcasecmp($row['role_name'], 'Admin') === 0 || strcasecmp($base, 'Admin') === 0 || intval($row['can_manage_orgs']) === 1);
+        $isPresOrVp = in_array($base, ['President', 'Vice President'], true) || in_array($row['role_name'], ['President', 'Vice President'], true);
+
+        $perms = [
+            'role_name' => $row['role_name'],
+            'base_role' => $base,
+            'description' => $row['description'] ?? '',
+            'badge_style' => $row['badge_style'] ?: 'badge-role-officer',
+            'is_system' => intval($row['is_system']) === 1,
+            'is_admin' => $isAdmin,
+            'is_pres_or_vp' => $isPresOrVp,
+            'can_manage_users' => $isAdmin || intval($row['can_manage_users']) === 1,
+            'can_manage_tasks' => $isAdmin || intval($row['can_manage_tasks']) === 1,
+            'can_manage_projects' => $isAdmin || intval($row['can_manage_projects']) === 1,
+            'can_manage_accomplishments' => $isAdmin || intval($row['can_manage_accomplishments']) === 1,
+            'can_manage_feedbacks' => $isAdmin || intval($row['can_manage_feedbacks']) === 1,
+            'can_view_reports' => $isAdmin || intval($row['can_view_reports']) === 1,
+            'can_manage_orgs' => $isAdmin || intval($row['can_manage_orgs']) === 1,
+        ];
+    } else {
+        // Fallback if role is not yet in user_roles table
+        $isAdmin = (strcasecmp($roleName, 'Admin') === 0);
+        $isPresOrVp = in_array($roleName, ['President', 'Vice President'], true);
+        $badge = 'badge-role-officer';
+        if ($isAdmin) $badge = 'badge-role-admin';
+        elseif (strcasecmp($roleName, 'President') === 0) $badge = 'badge-role-president';
+        elseif (strcasecmp($roleName, 'Vice President') === 0) $badge = 'badge-role-vp';
+        elseif (strcasecmp($roleName, 'Secretary') === 0) $badge = 'badge-role-secretary';
+        elseif (strcasecmp($roleName, 'Treasurer') === 0) $badge = 'badge-role-treasurer';
+
+        $perms = [
+            'role_name' => $roleName ?: 'Officer',
+            'base_role' => $isAdmin ? 'Admin' : ($isPresOrVp ? $roleName : 'Officer'),
+            'description' => '',
+            'badge_style' => $badge,
+            'is_system' => in_array($roleName, ['Admin', 'President', 'Vice President', 'Secretary', 'Treasurer', 'Officer'], true),
+            'is_admin' => $isAdmin,
+            'is_pres_or_vp' => $isPresOrVp,
+            'can_manage_users' => $isAdmin || $isPresOrVp,
+            'can_manage_tasks' => $isAdmin || $isPresOrVp,
+            'can_manage_projects' => true,
+            'can_manage_accomplishments' => true,
+            'can_manage_feedbacks' => true,
+            'can_view_reports' => true,
+            'can_manage_orgs' => $isAdmin,
+        ];
+    }
+
+    $cache[$roleKey] = $perms;
+    return $perms;
+}
+
+/**
+ * Automatically mark tasks that exceeded their deadline as 'Overdue' and record an Auto-Overdue notification log
+ */
+function syncOverdueTasks(?PDO $pdo = null): void {
+    if ($pdo === null) {
+        $pdo = getDBConnection();
+    }
+    try {
+        // 1. Find tasks that just exceeded their deadline and are not yet 'Overdue' or 'Accomplished'
+        $stmt = $pdo->query("SELECT id, title, status, deadline, assigned_to FROM `tasks` WHERE `deadline` < CURDATE() AND `status` NOT IN ('Accomplished', 'Overdue')");
+        $newlyOverdue = $stmt->fetchAll();
+
+        if (!empty($newlyOverdue)) {
+            $updStmt = $pdo->prepare("UPDATE `tasks` SET `status` = 'Overdue' WHERE `id` = ?");
+            $logStmt = $pdo->prepare("INSERT INTO `task_logs` (`task_id`, `user_id`, `user_name`, `user_role`, `action_type`, `log_details`) VALUES (?, NULL, 'System Auto-Monitor', 'System', 'Auto-Overdue', ?)");
+
+            foreach ($newlyOverdue as $t) {
+                $tid = intval($t['id']);
+                $oldStatus = $t['status'] ?: 'To Do';
+                $dlFormatted = date('M d, Y', strtotime($t['deadline']));
+                $updStmt->execute([$tid]);
+
+                $details = "Target completion deadline ($dlFormatted) exceeded for task \"{$t['title']}\". Status automatically changed from '$oldStatus' to 'Overdue'.";
+                $logStmt->execute([$tid, $details]);
+            }
+        }
+
+        // 2. Ensure any existing Overdue task also has an Auto-Overdue log entry for notifications
+        $stmtExisting = $pdo->query("SELECT t.id, t.title, t.deadline FROM `tasks` t
+            LEFT JOIN `task_logs` tl ON tl.task_id = t.id AND tl.action_type = 'Auto-Overdue'
+            WHERE t.status = 'Overdue' AND tl.id IS NULL");
+        $unloggedOverdue = $stmtExisting->fetchAll();
+        if (!empty($unloggedOverdue)) {
+            $logStmt = $pdo->prepare("INSERT INTO `task_logs` (`task_id`, `user_id`, `user_name`, `user_role`, `action_type`, `log_details`) VALUES (?, NULL, 'System Auto-Monitor', 'System', 'Auto-Overdue', ?)");
+            foreach ($unloggedOverdue as $ut) {
+                $dlFormatted = date('M d, Y', strtotime($ut['deadline']));
+                $details = "Target completion deadline ($dlFormatted) exceeded for task \"{$ut['title']}\". Status automatically marked as 'Overdue'.";
+                $logStmt->execute([intval($ut['id']), $details]);
+            }
+        }
+    } catch (PDOException $e) {
+        // Fail silently
+    }
+}
+
+/**
+ * Check if a specific user (by full name / role) is among the assigned personnel for a task
+ */
+function isUserAssignedToTask(?string $assignedTo, string $userName, string $userRole = ''): bool {
+    $userName = trim($userName);
+    $userRole = trim($userRole);
+    if ($userName === '' || $assignedTo === null || trim($assignedTo) === '') {
+        return false;
+    }
+
+    $parts = explode(',', $assignedTo);
+    foreach ($parts as $part) {
+        $part = trim($part);
+        if ($part === '') {
+            continue;
+        }
+        // Match "All Officers" for non-Admin organization officers
+        if (strcasecmp($part, 'All Officers') === 0 && strcasecmp($userRole, 'Admin') !== 0) {
+            return true;
+        }
+        // Exact match on "Full Name" or "Full Name (Role)"
+        if (strcasecmp($part, $userName) === 0) {
+            return true;
+        }
+        if ($userRole !== '' && strcasecmp($part, $userName . ' (' . $userRole . ')') === 0) {
+            return true;
+        }
+        // Extract name before " (Role)" and compare exact name
+        $nameOnly = trim(preg_replace('/\s*\([^)]*\)\s*$/', '', $part));
+        if ($nameOnly !== '' && strcasecmp($nameOnly, $userName) === 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Fetch active Task Deadline Reminders ONLY for the respective assigned personnel
+ * (Tomorrow deadline, Due Today, Almost on Target Completion, Overdue, and Assigned Tasks)
+ */
+function getTaskDeadlineReminders(?PDO $pdo, bool $isAdmin, int $orgId, string $userName, bool $canManageTasks = false, string $userRole = ''): array {
+    if ($pdo === null) {
+        $pdo = getDBConnection();
+    }
+    syncOverdueTasks($pdo);
+
+    $reminders = [];
+    if (trim($userName) === '') {
+        return $reminders;
+    }
+
+    try {
+        $conds = ["t.status != 'Accomplished'"];
+        $params = [];
+        if (!$isAdmin && $orgId > 0) {
+            $conds[] = "t.org_id = ?";
+            $params[] = $orgId;
+        }
+        $whereSql = implode(" AND ", $conds);
+
+        $sql = "SELECT t.*, DATEDIFF(t.deadline, CURDATE()) as days_left, o.acronym as org_acronym, p.title as project_title
+                FROM `tasks` t
+                LEFT JOIN `organizations` o ON t.org_id = o.id
+                LEFT JOIN `projects` p ON t.project_id = p.id
+                WHERE $whereSql
+                ORDER BY t.deadline ASC, FIELD(t.priority, 'High', 'Medium', 'Low')";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $tasks = $stmt->fetchAll();
+
+        foreach ($tasks as $t) {
+            // Send reminder ONLY to the respective assigned personnel of this task
+            if (!isUserAssignedToTask($t['assigned_to'] ?? '', $userName, $userRole)) {
+                continue;
+            }
+
+            $daysLeft = intval($t['days_left']);
+            $dlLabel = date('M d, Y', strtotime($t['deadline']));
+            $assigned = $t['assigned_to'] ?: 'Unassigned';
+
+            if ($daysLeft < 0 || $t['status'] === 'Overdue') {
+                $overdueDays = abs($daysLeft);
+                $overdueText = $overdueDays > 0 ? "$overdueDays day" . ($overdueDays === 1 ? '' : 's') . " past deadline" : "Past target completion";
+                $reminders[] = [
+                    'category' => 'overdue',
+                    'module' => 'Task',
+                    'item_id' => intval($t['id']),
+                    'title' => $t['title'],
+                    'status' => 'Overdue',
+                    'priority' => $t['priority'],
+                    'deadline' => $t['deadline'],
+                    'deadline_formatted' => $dlLabel,
+                    'days_left' => $daysLeft,
+                    'assigned_to' => $assigned,
+                    'org_acronym' => $t['org_acronym'] ?? '',
+                    'badge_text' => 'OVERDUE (AUTO-UPDATED)',
+                    'badge_class' => 'badge-overdue',
+                    'icon' => 'fa-triangle-exclamation',
+                    'color' => '#dc2626',
+                    'bg_color' => '#fef2f2',
+                    'border_color' => '#fecaca',
+                    'headline' => "Overdue Task: \"{$t['title']}\"",
+                    'message' => "Exceeded target completion deadline ($dlLabel — $overdueText). Status was automatically set to Overdue.",
+                    'link' => '../leadership/tasks.php?status=Overdue'
+                ];
+            } elseif ($daysLeft === 0) {
+                $reminders[] = [
+                    'category' => 'due_today',
+                    'module' => 'Task',
+                    'item_id' => intval($t['id']),
+                    'title' => $t['title'],
+                    'status' => $t['status'],
+                    'priority' => $t['priority'],
+                    'deadline' => $t['deadline'],
+                    'deadline_formatted' => $dlLabel,
+                    'days_left' => 0,
+                    'assigned_to' => $assigned,
+                    'org_acronym' => $t['org_acronym'] ?? '',
+                    'badge_text' => 'DEADLINE TODAY',
+                    'badge_class' => 'badge-overdue',
+                    'icon' => 'fa-bell',
+                    'color' => '#d97706',
+                    'bg_color' => '#fffbeb',
+                    'border_color' => '#fde68a',
+                    'headline' => "Due Today Reminder: \"{$t['title']}\"",
+                    'message' => "Urgent Reminder: Today ($dlLabel) is the target completion deadline for your assigned task! Current status: '{$t['status']}'.",
+                    'link' => '../leadership/tasks.php'
+                ];
+            } elseif ($daysLeft === 1) {
+                $reminders[] = [
+                    'category' => 'due_tomorrow',
+                    'module' => 'Task',
+                    'item_id' => intval($t['id']),
+                    'title' => $t['title'],
+                    'status' => $t['status'],
+                    'priority' => $t['priority'],
+                    'deadline' => $t['deadline'],
+                    'deadline_formatted' => $dlLabel,
+                    'days_left' => 1,
+                    'assigned_to' => $assigned,
+                    'org_acronym' => $t['org_acronym'] ?? '',
+                    'badge_text' => 'TOMORROW DEADLINE',
+                    'badge_class' => 'badge-in-progress',
+                    'icon' => 'fa-clock',
+                    'color' => '#b45309',
+                    'bg_color' => '#fffbeb',
+                    'border_color' => '#fcd34d',
+                    'headline' => "Reminder — Tomorrow is the Deadline: \"{$t['title']}\"",
+                    'message' => "Almost on target completion! Tomorrow ($dlLabel) is the deadline for your assigned task. Current status: '{$t['status']}'.",
+                    'link' => '../leadership/tasks.php'
+                ];
+            } elseif ($daysLeft >= 2 && $daysLeft <= 3) {
+                $reminders[] = [
+                    'category' => 'due_soon',
+                    'module' => 'Task',
+                    'item_id' => intval($t['id']),
+                    'title' => $t['title'],
+                    'status' => $t['status'],
+                    'priority' => $t['priority'],
+                    'deadline' => $t['deadline'],
+                    'deadline_formatted' => $dlLabel,
+                    'days_left' => $daysLeft,
+                    'assigned_to' => $assigned,
+                    'org_acronym' => $t['org_acronym'] ?? '',
+                    'badge_text' => "ALMOST DUE ($daysLeft DAYS LEFT)",
+                    'badge_class' => 'badge-planning',
+                    'icon' => 'fa-hourglass-half',
+                    'color' => '#0284c7',
+                    'bg_color' => '#f0f9ff',
+                    'border_color' => '#bae6fd',
+                    'headline' => "Approaching Target Completion: \"{$t['title']}\"",
+                    'message' => "Your assigned task is almost on target completion ($dlLabel — $daysLeft days remaining). Current status: '{$t['status']}'.",
+                    'link' => '../leadership/tasks.php'
+                ];
+            } else {
+                // Active upcoming task notification for the assigned personnel
+                $reminders[] = [
+                    'category' => 'active_task',
+                    'module' => 'Task',
+                    'item_id' => intval($t['id']),
+                    'title' => $t['title'],
+                    'status' => $t['status'],
+                    'priority' => $t['priority'],
+                    'deadline' => $t['deadline'],
+                    'deadline_formatted' => $dlLabel,
+                    'days_left' => $daysLeft,
+                    'assigned_to' => $assigned,
+                    'org_acronym' => $t['org_acronym'] ?? '',
+                    'badge_text' => strtoupper($t['status']),
+                    'badge_class' => $t['status'] === 'In Progress' ? 'badge-in-progress' : 'badge-todo',
+                    'icon' => 'fa-list-check',
+                    'color' => '#4f46e5',
+                    'bg_color' => '#ffffff',
+                    'border_color' => '#e2e8f0',
+                    'headline' => "Task Assigned to You: \"{$t['title']}\"",
+                    'message' => "Target completion date: $dlLabel ($daysLeft days left) • Current status: '{$t['status']}'.",
+                    'link' => '../leadership/tasks.php'
+                ];
+            }
+        }
+    } catch (PDOException $e) {
+        // Fail silently
+    }
+
+    return $reminders;
+}
+
+// Global PDO instance helper & automatic overdue task synchronization
 $pdo = getDBConnection();
+syncOverdueTasks($pdo);
 ?>

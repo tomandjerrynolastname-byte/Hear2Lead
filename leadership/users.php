@@ -1,5 +1,5 @@
 <?php
-// leadership/users.php - User Management Module (Leaders & Officers vs Student Accounts)
+// leadership/users.php - User Management Module (Leaders & Officers, Student Accounts & Dynamic Role Library)
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/auth_check.php';
 
@@ -7,11 +7,13 @@ $current_user_id = intval($_SESSION['user_id']);
 $current_org_id = intval($_SESSION['org_id']);
 $current_role = $_SESSION['user_role'] ?? 'Officer';
 
-$is_admin = ($current_role === 'Admin');
-$is_pres_or_vp = in_array($current_role, ['President', 'Vice President'], true);
+$role_perms = getRolePermissions($current_role, $pdo);
+$is_admin = !empty($role_perms['is_admin']);
+$is_pres_or_vp = !empty($role_perms['is_pres_or_vp']);
+$can_manage_users = !empty($role_perms['can_manage_users']);
 
-// Strict RBAC: Only Admin, President, and Vice President can access this page
-if (!$is_admin && !$is_pres_or_vp) {
+// Strict RBAC: Only Admin, President, Vice President, or Custom Roles with User Management permission can access this page
+if (!$can_manage_users) {
     header("Location: dashboard.php?error=" . urlencode("Access denied. You do not have permission to access User Management."));
     exit;
 }
@@ -19,7 +21,14 @@ if (!$is_admin && !$is_pres_or_vp) {
 $success_msg = '';
 $error_msg = '';
 
-$active_tab = (isset($_GET['tab']) && $_GET['tab'] === 'students') ? 'students' : 'leaders';
+$req_tab = $_GET['tab'] ?? 'leaders';
+if ($req_tab === 'students') {
+    $active_tab = 'students';
+} elseif ($req_tab === 'roles' && $is_admin) {
+    $active_tab = 'roles';
+} else {
+    $active_tab = 'leaders';
+}
 
 // ----------------------------------------------------
 // Handle CRUD Actions
@@ -41,8 +50,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Scope org_id
         $org_id = $is_admin ? intval($_POST['org_id'] ?? 0) : $current_org_id;
 
-        // Prevent non-admin from creating Admin accounts
-        if (!$is_admin && $role === 'Admin') {
+        // Prevent non-admin from creating Admin or Admin-equivalent accounts
+        $target_role_perms = getRolePermissions($role, $pdo);
+        if (!$is_admin && !empty($target_role_perms['is_admin'])) {
             $role = 'Officer';
         }
 
@@ -58,7 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $hashed_password = password_hash($password, PASSWORD_BCRYPT);
                 $stmt = $pdo->prepare("INSERT INTO users (org_id, full_name, username, email, password, role) VALUES (?, ?, ?, ?, ?, ?)");
                 if ($stmt->execute([$org_id, $full_name, $username, $email, $hashed_password, $role])) {
-                    $success_msg = "Officer account '$username' created successfully!";
+                    $success_msg = "Officer account '$username' ($role) created successfully!";
                 } else {
                     $error_msg = "Failed to create officer account.";
                 }
@@ -79,19 +89,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $target_stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
         $target_stmt->execute([$user_id]);
         $target_user = $target_stmt->fetch();
+        $existing_target_perms = $target_user ? getRolePermissions($target_user['role'], $pdo) : [];
 
         if (!$target_user) {
             $error_msg = "The specified user account was not found.";
         } elseif (!$is_admin && $target_user['org_id'] != $current_org_id) {
             $error_msg = "Permission denied: You can only manage officers in your own organization.";
-        } elseif (!$is_admin && $target_user['role'] === 'Admin') {
+        } elseif (!$is_admin && !empty($existing_target_perms['is_admin'])) {
             $error_msg = "Permission denied: You cannot modify an Administrator account.";
         } else {
             // Scope org_id
             $org_id = $is_admin ? intval($_POST['org_id'] ?? $target_user['org_id']) : $current_org_id;
 
-            // Non-admin cannot escalate anyone to Admin
-            if (!$is_admin && $role === 'Admin') {
+            // Non-admin cannot escalate anyone to Admin or Admin-equivalent role
+            $new_role_perms = getRolePermissions($role, $pdo);
+            if (!$is_admin && !empty($new_role_perms['is_admin'])) {
                 $role = $target_user['role'];
             }
 
@@ -135,12 +147,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $target_stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
             $target_stmt->execute([$user_id]);
             $target_user = $target_stmt->fetch();
+            $existing_target_perms = $target_user ? getRolePermissions($target_user['role'], $pdo) : [];
 
             if (!$target_user) {
                 $error_msg = "Target account not found.";
             } elseif (!$is_admin && $target_user['org_id'] != $current_org_id) {
                 $error_msg = "Permission denied: You can only delete accounts in your own organization.";
-            } elseif (!$is_admin && $target_user['role'] === 'Admin') {
+            } elseif (!$is_admin && !empty($existing_target_perms['is_admin'])) {
                 $error_msg = "Permission denied: You cannot delete an Administrator account.";
             } else {
                 $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
@@ -223,11 +236,160 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
+
+    // ==========================================
+    // 3. DYNAMIC / CUSTOM ROLE LIBRARY ACTIONS (Admin Only)
+    // ==========================================
+    if (in_array($action, ['create_role', 'update_role', 'delete_role'], true)) {
+        $active_tab = 'roles';
+        if (!$is_admin) {
+            $error_msg = "Permission denied: Only Administrators can manage the User Role Library.";
+        } elseif ($action === 'create_role') {
+            $role_name = trim($_POST['role_name'] ?? '');
+            $base_role = trim($_POST['base_role'] ?? 'Officer');
+            $description = trim($_POST['description'] ?? '');
+            $badge_style = trim($_POST['badge_style'] ?? '');
+
+            $allowed_bases = ['President', 'Vice President', 'Secretary', 'Treasurer', 'Officer', 'Admin'];
+            if (!in_array($base_role, $allowed_bases, true)) {
+                $base_role = 'Officer';
+            }
+
+            if (empty($badge_style)) {
+                switch ($base_role) {
+                    case 'Admin': $badge_style = 'badge-role-admin'; break;
+                    case 'President': $badge_style = 'badge-role-president'; break;
+                    case 'Vice President': $badge_style = 'badge-role-vp'; break;
+                    case 'Secretary': $badge_style = 'badge-role-secretary'; break;
+                    case 'Treasurer': $badge_style = 'badge-role-treasurer'; break;
+                    default: $badge_style = 'badge-role-officer'; break;
+                }
+            }
+
+            $can_manage_orgs = ($base_role === 'Admin' || !empty($_POST['can_manage_orgs'])) ? 1 : 0;
+            $can_manage_users_flag = ($can_manage_orgs || !empty($_POST['can_manage_users'])) ? 1 : 0;
+            $can_manage_tasks_flag = ($can_manage_orgs || !empty($_POST['can_manage_tasks'])) ? 1 : 0;
+            $can_manage_projects_flag = ($can_manage_orgs || !empty($_POST['can_manage_projects'])) ? 1 : 0;
+            $can_manage_acc_flag = ($can_manage_orgs || !empty($_POST['can_manage_accomplishments'])) ? 1 : 0;
+            $can_manage_fb_flag = ($can_manage_orgs || !empty($_POST['can_manage_feedbacks'])) ? 1 : 0;
+            $can_view_reports_flag = ($can_manage_orgs || !empty($_POST['can_view_reports'])) ? 1 : 0;
+
+            if (empty($role_name)) {
+                $error_msg = "Role Name is required (e.g., CEO, Auditor, P.I.O.).";
+            } else {
+                $chk = $pdo->prepare("SELECT COUNT(*) FROM user_roles WHERE LOWER(role_name) = LOWER(?)");
+                $chk->execute([$role_name]);
+                if ($chk->fetchColumn() > 0) {
+                    $error_msg = "A role named '$role_name' already exists in the Role Library.";
+                } else {
+                    if (empty($description)) {
+                        $description = "Custom role with system accessibility based on $base_role.";
+                    }
+                    $stmt = $pdo->prepare("INSERT INTO user_roles (role_name, base_role, description, badge_style, can_manage_users, can_manage_tasks, can_manage_projects, can_manage_accomplishments, can_manage_feedbacks, can_view_reports, can_manage_orgs, is_system) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)");
+                    if ($stmt->execute([$role_name, $base_role, $description, $badge_style, $can_manage_users_flag, $can_manage_tasks_flag, $can_manage_projects_flag, $can_manage_acc_flag, $can_manage_fb_flag, $can_view_reports_flag, $can_manage_orgs])) {
+                        $success_msg = "Custom role '$role_name' (accessibility like $base_role) added to the Role Library!";
+                    } else {
+                        $error_msg = "Failed to add custom role.";
+                    }
+                }
+            }
+        } elseif ($action === 'update_role') {
+            $role_id = intval($_POST['role_id'] ?? 0);
+            $role_name = trim($_POST['role_name'] ?? '');
+            $base_role = trim($_POST['base_role'] ?? 'Officer');
+            $description = trim($_POST['description'] ?? '');
+            $badge_style = trim($_POST['badge_style'] ?? 'badge-role-officer');
+
+            $stmt_old = $pdo->prepare("SELECT * FROM user_roles WHERE id = ?");
+            $stmt_old->execute([$role_id]);
+            $old_role = $stmt_old->fetch();
+
+            if (!$old_role) {
+                $error_msg = "Role record not found.";
+            } else {
+                $is_sys = intval($old_role['is_system']) === 1;
+                if ($is_sys) {
+                    // Preserve core role_name and base_role for built-in system roles
+                    $role_name = $old_role['role_name'];
+                    $base_role = $old_role['base_role'];
+                }
+
+                $is_admin_role = ($base_role === 'Admin' || $role_name === 'Admin');
+                $can_manage_orgs = ($is_admin_role || !empty($_POST['can_manage_orgs'])) ? 1 : 0;
+                $can_manage_users_flag = ($can_manage_orgs || !empty($_POST['can_manage_users'])) ? 1 : 0;
+                $can_manage_tasks_flag = ($can_manage_orgs || !empty($_POST['can_manage_tasks'])) ? 1 : 0;
+                $can_manage_projects_flag = ($can_manage_orgs || !empty($_POST['can_manage_projects'])) ? 1 : 0;
+                $can_manage_acc_flag = ($can_manage_orgs || !empty($_POST['can_manage_accomplishments'])) ? 1 : 0;
+                $can_manage_fb_flag = ($can_manage_orgs || !empty($_POST['can_manage_feedbacks'])) ? 1 : 0;
+                $can_view_reports_flag = ($can_manage_orgs || !empty($_POST['can_view_reports'])) ? 1 : 0;
+
+                if (empty($role_name)) {
+                    $error_msg = "Role Name cannot be empty.";
+                } else {
+                    $chk = $pdo->prepare("SELECT COUNT(*) FROM user_roles WHERE LOWER(role_name) = LOWER(?) AND id != ?");
+                    $chk->execute([$role_name, $role_id]);
+                    if ($chk->fetchColumn() > 0) {
+                        $error_msg = "Another role is already using the name '$role_name'.";
+                    } else {
+                        $stmt_up = $pdo->prepare("UPDATE user_roles SET role_name = ?, base_role = ?, description = ?, badge_style = ?, can_manage_users = ?, can_manage_tasks = ?, can_manage_projects = ?, can_manage_accomplishments = ?, can_manage_feedbacks = ?, can_view_reports = ?, can_manage_orgs = ? WHERE id = ?");
+                        if ($stmt_up->execute([$role_name, $base_role, $description, $badge_style, $can_manage_users_flag, $can_manage_tasks_flag, $can_manage_projects_flag, $can_manage_acc_flag, $can_manage_fb_flag, $can_view_reports_flag, $can_manage_orgs, $role_id])) {
+                            // If custom role name changed, propagate to users assigned to this role
+                            if ($old_role['role_name'] !== $role_name) {
+                                $upd_users = $pdo->prepare("UPDATE users SET role = ? WHERE role = ?");
+                                $upd_users->execute([$role_name, $old_role['role_name']]);
+                            }
+                            $success_msg = "Role '$role_name' accessibility & settings updated!";
+                        } else {
+                            $error_msg = "Failed to update role.";
+                        }
+                    }
+                }
+            }
+        } elseif ($action === 'delete_role') {
+            $role_id = intval($_POST['role_id'] ?? 0);
+            $stmt_old = $pdo->prepare("SELECT * FROM user_roles WHERE id = ?");
+            $stmt_old->execute([$role_id]);
+            $old_role = $stmt_old->fetch();
+
+            if (!$old_role) {
+                $error_msg = "Role not found.";
+            } elseif (intval($old_role['is_system']) === 1) {
+                $error_msg = "Built-in system roles cannot be deleted.";
+            } else {
+                $fallback_role = $old_role['base_role'] ?: 'Officer';
+                $reassign = $pdo->prepare("UPDATE users SET role = ? WHERE role = ?");
+                $reassign->execute([$fallback_role, $old_role['role_name']]);
+                $affected = $reassign->rowCount();
+
+                $del = $pdo->prepare("DELETE FROM user_roles WHERE id = ?");
+                if ($del->execute([$role_id])) {
+                    $extra = $affected > 0 ? " ($affected assigned account(s) were moved to '$fallback_role')." : "";
+                    $success_msg = "Custom role '{$old_role['role_name']}' deleted from Role Library.$extra";
+                } else {
+                    $error_msg = "Failed to delete custom role.";
+                }
+            }
+        }
+    }
 }
 
 // ----------------------------------------------------
 // Data Fetching & Scoping
 // ----------------------------------------------------
+// 0. Dynamic Role Library List & Map
+$role_library = getAllUserRoles($pdo);
+$role_library_map = [];
+foreach ($role_library as $rItem) {
+    $role_library_map[strtolower($rItem['role_name'])] = $rItem;
+}
+
+// Usage count per role
+$role_usage_counts = [];
+$stmt_rc = $pdo->query("SELECT role, COUNT(*) as cnt FROM users GROUP BY role");
+foreach ($stmt_rc->fetchAll() as $rcRow) {
+    $role_usage_counts[strtolower($rcRow['role'])] = intval($rcRow['cnt']);
+}
+
 // 1. Organizations List (for filters & modals)
 $orgs = $pdo->query("SELECT * FROM organizations ORDER BY name ASC")->fetchAll();
 
@@ -239,7 +401,7 @@ $leader_where = ["1=1"];
 $leader_params = [];
 
 if (!$is_admin) {
-    // President / Vice President strictly scoped to their own organization
+    // President / Vice President / Custom Leader strictly scoped to their own organization
     $leader_where[] = "u.org_id = ?";
     $leader_params[] = $current_org_id;
 } elseif ($filter_org > 0) {
@@ -249,7 +411,8 @@ if (!$is_admin) {
 }
 
 if (!empty($search_leaders)) {
-    $leader_where[] = "(u.full_name LIKE ? OR u.username LIKE ? OR u.email LIKE ?)";
+    $leader_where[] = "(u.full_name LIKE ? OR u.username LIKE ? OR u.email LIKE ? OR u.role LIKE ?)";
+    $leader_params[] = "%$search_leaders%";
     $leader_params[] = "%$search_leaders%";
     $leader_params[] = "%$search_leaders%";
     $leader_params[] = "%$search_leaders%";
@@ -294,6 +457,7 @@ $stmt_students->execute($student_params);
 $students = $stmt_students->fetchAll();
 
 $student_count = $pdo->query("SELECT COUNT(*) FROM students")->fetchColumn();
+$role_count = count($role_library);
 
 include_once __DIR__ . '/../includes/header.php';
 ?>
@@ -304,7 +468,7 @@ include_once __DIR__ . '/../includes/header.php';
     <h1 class="page-title"><i class="fa-solid fa-users-gear" style="color: var(--primary);"></i> User Management Module</h1>
     <p class="page-subtitle">
       <?php if ($is_admin): ?>
-        Manage leader and officer accounts across all student organizations, and configure verified student accounts.
+        Manage leader and officer accounts across all organizations, configure verified student accounts, and customize the <strong>User Role Library & System Accessibility</strong>.
       <?php else: ?>
         Manage leader and officer accounts for <strong><?= htmlspecialchars($_SESSION['org_name']) ?> (<?= htmlspecialchars($_SESSION['org_acronym']) ?>)</strong>, and view student portal accounts.
       <?php endif; ?>
@@ -316,6 +480,9 @@ include_once __DIR__ . '/../includes/header.php';
       <i class="fa-solid fa-user-plus"></i> Add New Officer
     </button>
     <?php if ($is_admin): ?>
+      <button class="btn btn-secondary" data-modal-target="createRoleModal" style="border-color: #c7d2fe; background: #eef2ff; color: var(--primary);">
+        <i class="fa-solid fa-id-badge"></i> Add Custom Role
+      </button>
       <button class="btn btn-secondary" data-modal-target="createStudentModal">
         <i class="fa-solid fa-user-graduate"></i> Add Student Account
       </button>
@@ -349,16 +516,23 @@ include_once __DIR__ . '/../includes/header.php';
 
 <!-- Tab Panel Navigation -->
 <div class="user-tabs-nav">
-  <button type="button" class="user-tab-btn <?= $active_tab === 'leaders' ? 'active' : '' ?>" onclick="switchUserTab('leaders')">
+  <button type="button" class="user-tab-btn <?= $active_tab === 'leaders' ? 'active' : '' ?>" id="tab-btn-leaders" onclick="switchUserTab('leaders')">
     <i class="fa-solid fa-user-shield"></i>
     <span>Leaders & Officers Accounts</span>
     <span class="user-tab-badge"><?= $leader_count ?></span>
   </button>
-  <button type="button" class="user-tab-btn <?= $active_tab === 'students' ? 'active' : '' ?>" onclick="switchUserTab('students')">
+  <button type="button" class="user-tab-btn <?= $active_tab === 'students' ? 'active' : '' ?>" id="tab-btn-students" onclick="switchUserTab('students')">
     <i class="fa-solid fa-graduation-cap"></i>
     <span>Student Accounts</span>
     <span class="user-tab-badge"><?= $student_count ?></span>
   </button>
+  <?php if ($is_admin): ?>
+    <button type="button" class="user-tab-btn <?= $active_tab === 'roles' ? 'active' : '' ?>" id="tab-btn-roles" onclick="switchUserTab('roles')">
+      <i class="fa-solid fa-id-badge"></i>
+      <span>Role Library & Accessibility</span>
+      <span class="user-tab-badge"><?= $role_count ?></span>
+    </button>
+  <?php endif; ?>
 </div>
 
 <!-- ======================================================== -->
@@ -426,15 +600,12 @@ include_once __DIR__ . '/../includes/header.php';
         <?php else: ?>
           <?php foreach ($users as $user): 
             $is_self = ($user['id'] === $current_user_id);
-            $role_badge_class = 'badge-role-officer';
-            switch ($user['role']) {
-                case 'Admin': $role_badge_class = 'badge-role-admin'; break;
-                case 'President': $role_badge_class = 'badge-role-president'; break;
-                case 'Vice President': $role_badge_class = 'badge-role-vp'; break;
-                case 'Secretary': $role_badge_class = 'badge-role-secretary'; break;
-                case 'Treasurer': $role_badge_class = 'badge-role-treasurer'; break;
-                default: $role_badge_class = 'badge-role-officer'; break;
-            }
+            $rKey = strtolower($user['role'] ?? 'officer');
+            $rInfo = $role_library_map[$rKey] ?? null;
+            $role_badge_class = $rInfo['badge_style'] ?? 'badge-role-officer';
+            $base_equiv = $rInfo['base_role'] ?? $user['role'];
+            $is_custom_role = ($rInfo && strcasecmp($rInfo['role_name'], $rInfo['base_role']) !== 0);
+            $is_target_admin = ($user['role'] === 'Admin' || strcasecmp($base_equiv, 'Admin') === 0);
           ?>
             <tr style="<?= $is_self ? 'background-color: #f0f9ff;' : '' ?>">
               <td>
@@ -446,14 +617,21 @@ include_once __DIR__ . '/../includes/header.php';
               <td><code><?= htmlspecialchars($user['username']) ?></code></td>
               <td><a href="mailto:<?= htmlspecialchars($user['email']) ?>" style="font-size: 0.85rem; color: var(--primary);"><?= htmlspecialchars($user['email']) ?></a></td>
               <td><span class="badge badge-planning"><strong><?= htmlspecialchars($user['acronym']) ?></strong></span></td>
-              <td><span class="badge <?= $role_badge_class ?>"><?= htmlspecialchars($user['role']) ?></span></td>
+              <td>
+                <span class="badge <?= htmlspecialchars($role_badge_class) ?>"><?= htmlspecialchars($user['role']) ?></span>
+                <?php if ($is_custom_role): ?>
+                  <div style="font-size: 0.7rem; color: var(--gray-500); margin-top: 0.18rem; font-weight: 600;">
+                    <i class="fa-solid fa-key" style="font-size: 0.65rem; color: var(--primary);"></i> Access: like <?= htmlspecialchars($base_equiv) ?>
+                  </div>
+                <?php endif; ?>
+              </td>
               <td><span style="font-size: 0.8rem; color: var(--gray-600);"><i class="fa-regular fa-clock"></i> <?= date('M d, Y', strtotime($user['created_at'])) ?></span></td>
               <td style="text-align: right;">
                 <div style="display: inline-flex; gap: 0.4rem; justify-content: flex-end;">
                   <button class="btn btn-secondary btn-sm" onclick='openUserEditModal(<?= json_encode($user) ?>)' title="Edit Officer">
                     <i class="fa-solid fa-user-pen"></i> Edit
                   </button>
-                  <?php if (!$is_self && ($is_admin || $user['role'] !== 'Admin')): ?>
+                  <?php if (!$is_self && ($is_admin || !$is_target_admin)): ?>
                     <form method="POST" action="users.php" onsubmit="return confirmDeleteSwal(event, 'Are you sure you want to delete officer account \'<?= htmlspecialchars($user['username'], ENT_QUOTES) ?>\'?', 'Delete Officer Account?');" style="display: inline;">
                       <input type="hidden" name="action" value="delete_user">
                       <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
@@ -554,6 +732,102 @@ include_once __DIR__ . '/../includes/header.php';
   </div>
 </div>
 
+<?php if ($is_admin): ?>
+<!-- ======================================================== -->
+<!-- TAB 3: ROLE LIBRARY & SYSTEM ACCESSIBILITY PANE          -->
+<!-- ======================================================== -->
+<div class="user-tab-pane <?= $active_tab === 'roles' ? 'active' : '' ?>" id="tab-roles">
+
+  <div class="table-container">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Role Title</th>
+          <th>Role Equivalent (Access Template)</th>
+          <th>System Accessibility & Permitted Modules</th>
+          <th>Description</th>
+          <th>Assigned Users</th>
+          <th style="text-align: right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($role_library as $rRow):
+          $is_sys_role = intval($rRow['is_system']) === 1;
+          $used_cnt = $role_usage_counts[strtolower($rRow['role_name'])] ?? 0;
+        ?>
+          <tr>
+            <td>
+              <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                <span class="badge <?= htmlspecialchars($rRow['badge_style']) ?>" style="font-size: 0.8rem;"><?= htmlspecialchars($rRow['role_name']) ?></span>
+                <?php if ($is_sys_role): ?>
+                  <span style="font-size: 0.68rem; background: var(--gray-100); color: var(--gray-600); padding: 0.15rem 0.45rem; border-radius: 999px; font-weight: 700;">System Default</span>
+                <?php else: ?>
+                  <span style="font-size: 0.68rem; background: #eef2ff; color: var(--primary); padding: 0.15rem 0.45rem; border-radius: 999px; font-weight: 700;">Custom Role</span>
+                <?php endif; ?>
+              </div>
+            </td>
+            <td>
+              <span style="font-size: 0.84rem; font-weight: 700; color: var(--dark);">
+                <i class="fa-solid fa-user-check" style="color: var(--primary); margin-right: 0.25rem;"></i>
+                Like <?= htmlspecialchars($rRow['base_role']) ?>
+              </span>
+            </td>
+            <td>
+              <div style="display: flex; flex-wrap: wrap; gap: 0.3rem; max-width: 380px;">
+                <span class="badge badge-planning" style="font-size: 0.68rem;"><i class="fa-solid fa-chart-line"></i> Dashboard</span>
+                <?php if (!empty($rRow['can_manage_orgs'])): ?>
+                  <span class="badge badge-role-admin" style="font-size: 0.68rem;"><i class="fa-solid fa-sitemap"></i> All Orgs & Admin</span>
+                <?php endif; ?>
+                <?php if (!empty($rRow['can_manage_users'])): ?>
+                  <span class="badge badge-role-president" style="font-size: 0.68rem;"><i class="fa-solid fa-users-gear"></i> Manage Users</span>
+                <?php endif; ?>
+                <?php if (!empty($rRow['can_manage_tasks'])): ?>
+                  <span class="badge badge-in-progress" style="font-size: 0.68rem;"><i class="fa-solid fa-list-check"></i> Create/Assign Tasks</span>
+                <?php else: ?>
+                  <span class="badge badge-todo" style="font-size: 0.68rem;"><i class="fa-solid fa-list-check"></i> Assigned Tasks Only</span>
+                <?php endif; ?>
+                <?php if (!empty($rRow['can_manage_projects'])): ?>
+                  <span class="badge badge-accomplished" style="font-size: 0.68rem;"><i class="fa-solid fa-diagram-project"></i> Projects</span>
+                <?php endif; ?>
+                <?php if (!empty($rRow['can_manage_accomplishments'])): ?>
+                  <span class="badge badge-accomplished" style="font-size: 0.68rem;"><i class="fa-solid fa-trophy"></i> Accomplishments</span>
+                <?php endif; ?>
+                <?php if (!empty($rRow['can_manage_feedbacks'])): ?>
+                  <span class="badge badge-accomplished" style="font-size: 0.68rem;"><i class="fa-solid fa-comments"></i> Feedbacks</span>
+                <?php endif; ?>
+                <?php if (!empty($rRow['can_view_reports'])): ?>
+                  <span class="badge badge-accomplished" style="font-size: 0.68rem;"><i class="fa-solid fa-chart-pie"></i> Reports</span>
+                <?php endif; ?>
+              </div>
+            </td>
+            <td style="max-width: 240px; font-size: 0.82rem; color: var(--gray-600);">
+              <?= htmlspecialchars($rRow['description'] ?: '—') ?>
+            </td>
+            <td>
+              <span class="badge badge-todo" style="font-weight: 700;"><?= $used_cnt ?> account<?= $used_cnt === 1 ? '' : 's' ?></span>
+            </td>
+            <td style="text-align: right;">
+              <div style="display: inline-flex; gap: 0.4rem; justify-content: flex-end;">
+                <button type="button" class="btn btn-secondary btn-sm" onclick='openRoleEditModal(<?= json_encode($rRow, JSON_HEX_APOS | JSON_HEX_QUOT) ?>)' title="Edit Role & Accessibility">
+                  <i class="fa-solid fa-sliders"></i> Edit Access
+                </button>
+                <?php if (!$is_sys_role): ?>
+                  <form method="POST" action="users.php" onsubmit="return confirmDeleteSwal(event, 'Delete custom role \'<?= htmlspecialchars($rRow['role_name'], ENT_QUOTES) ?>\'? Any users assigned to it will be reassigned to <?= htmlspecialchars($rRow['base_role'], ENT_QUOTES) ?>.', 'Delete Custom Role?');" style="display: inline;">
+                    <input type="hidden" name="action" value="delete_role">
+                    <input type="hidden" name="role_id" value="<?= $rRow['id'] ?>">
+                    <button type="submit" class="btn btn-danger btn-sm" title="Delete Custom Role"><i class="fa-solid fa-trash"></i></button>
+                  </form>
+                <?php endif; ?>
+              </div>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+</div>
+<?php endif; ?>
+
 <!-- ======================================================== -->
 <!-- MODAL: ADD NEW OFFICER / USER                           -->
 <!-- ======================================================== -->
@@ -602,16 +876,27 @@ include_once __DIR__ . '/../includes/header.php';
           </div>
 
           <div class="form-group">
-            <label class="form-label">Role <span style="color: red;">*</span></label>
-            <select name="role" class="form-control" required>
-              <option value="Officer">Officer</option>
-              <option value="President">President</option>
-              <option value="Vice President">Vice President</option>
-              <option value="Secretary">Secretary</option>
-              <option value="Treasurer">Treasurer</option>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <label class="form-label" style="margin-bottom: 0.35rem;">Role <span style="color: red;">*</span></label>
               <?php if ($is_admin): ?>
-                <option value="Admin">Admin</option>
+                <button type="button" onclick="document.getElementById('createUserModal').classList.remove('active'); document.getElementById('createRoleModal').classList.add('active');" style="background: none; border: none; color: var(--primary); font-size: 0.75rem; font-weight: 700; cursor: pointer; padding: 0;">
+                  <i class="fa-solid fa-plus"></i> New Role
+                </button>
               <?php endif; ?>
+            </div>
+            <select name="role" class="form-control" required>
+              <?php foreach ($role_library as $rOpt):
+                $opt_is_admin = ($rOpt['role_name'] === 'Admin' || $rOpt['base_role'] === 'Admin' || !empty($rOpt['can_manage_orgs']));
+                if (!$is_admin && $opt_is_admin) continue;
+                $opt_label = $rOpt['role_name'];
+                if (strcasecmp($rOpt['role_name'], $rOpt['base_role']) !== 0) {
+                    $opt_label .= ' (like ' . $rOpt['base_role'] . ')';
+                }
+              ?>
+                <option value="<?= htmlspecialchars($rOpt['role_name']) ?>" <?= $rOpt['role_name'] === 'Officer' ? 'selected' : '' ?>>
+                  <?= htmlspecialchars($opt_label) ?>
+                </option>
+              <?php endforeach; ?>
             </select>
           </div>
         </div>
@@ -680,14 +965,18 @@ include_once __DIR__ . '/../includes/header.php';
           <div class="form-group">
             <label class="form-label">Role <span style="color: red;">*</span></label>
             <select name="role" id="edit_role" class="form-control" required>
-              <option value="Officer">Officer</option>
-              <option value="President">President</option>
-              <option value="Vice President">Vice President</option>
-              <option value="Secretary">Secretary</option>
-              <option value="Treasurer">Treasurer</option>
-              <?php if ($is_admin): ?>
-                <option value="Admin">Admin</option>
-              <?php endif; ?>
+              <?php foreach ($role_library as $rOpt):
+                $opt_is_admin = ($rOpt['role_name'] === 'Admin' || $rOpt['base_role'] === 'Admin' || !empty($rOpt['can_manage_orgs']));
+                if (!$is_admin && $opt_is_admin) continue;
+                $opt_label = $rOpt['role_name'];
+                if (strcasecmp($rOpt['role_name'], $rOpt['base_role']) !== 0) {
+                    $opt_label .= ' (like ' . $rOpt['base_role'] . ')';
+                }
+              ?>
+                <option value="<?= htmlspecialchars($rOpt['role_name']) ?>">
+                  <?= htmlspecialchars($opt_label) ?>
+                </option>
+              <?php endforeach; ?>
             </select>
           </div>
         </div>
@@ -707,6 +996,197 @@ include_once __DIR__ . '/../includes/header.php';
 </div>
 
 <?php if ($is_admin): ?>
+<!-- ======================================================== -->
+<!-- MODAL: ADD CUSTOM ROLE TO ROLE LIBRARY                   -->
+<!-- ======================================================== -->
+<div class="modal-backdrop" id="createRoleModal">
+  <div class="modal-card" style="max-width: 600px;">
+    <div class="modal-header">
+      <h3 style="font-size: 1.2rem; font-weight: 700; color: var(--dark);"><i class="fa-solid fa-id-badge" style="color: var(--primary);"></i> Add Custom Role to Library</h3>
+      <button class="close-btn" data-modal-close>&times;</button>
+    </div>
+
+    <form method="POST" action="users.php">
+      <input type="hidden" name="action" value="create_role">
+
+      <div class="modal-body">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label">Custom Role Title <span style="color: red;">*</span></label>
+            <input type="text" name="role_name" class="form-control" placeholder="e.g. CEO, Auditor, P.I.O." required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Role Equivalent (Like...) <span style="color: red;">*</span></label>
+            <select name="base_role" id="create_base_role" class="form-control" onchange="applyBaseRoleTemplate('create', this.value)" required>
+              <option value="President" selected>President (Executive Leader)</option>
+              <option value="Vice President">Vice President (Co-Executive)</option>
+              <option value="Secretary">Secretary (Officer Access)</option>
+              <option value="Treasurer">Treasurer (Officer Access)</option>
+              <option value="Officer">Officer (Standard Access)</option>
+              <option value="Admin">Admin (System-wide Access)</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label">Badge Color Style</label>
+            <select name="badge_style" id="create_badge_style" class="form-control">
+              <option value="badge-role-president" selected>Crimson Red (President Style)</option>
+              <option value="badge-role-vp">Sky Blue (Vice President Style)</option>
+              <option value="badge-role-secretary">Emerald Green (Secretary Style)</option>
+              <option value="badge-role-treasurer">Amber Gold (Treasurer Style)</option>
+              <option value="badge-role-officer">Slate Gray (Officer Style)</option>
+              <option value="badge-role-admin">Royal Purple (Admin Style)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Description (Optional)</label>
+            <input type="text" name="description" class="form-control" placeholder="e.g. Chief Executive Officer with President access">
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 0;">
+          <label class="form-label" style="margin-bottom: 0.5rem;"><i class="fa-solid fa-shield-halved" style="color: var(--primary);"></i> System Accessibility & Module Permissions</label>
+          <div style="background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: var(--radius-sm); padding: 0.85rem; display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem;">
+            <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer;">
+              <input type="checkbox" name="can_manage_users" id="create_perm_users" value="1" checked style="margin-top: 0.2rem;">
+              <span><strong>User Management</strong><br><small style="color: var(--gray-500);">Add/Edit Organization Officers</small></span>
+            </label>
+            <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer;">
+              <input type="checkbox" name="can_manage_tasks" id="create_perm_tasks" value="1" checked style="margin-top: 0.2rem;">
+              <span><strong>Task Organizer & Assign</strong><br><small style="color: var(--gray-500);">Create, Edit & Assign Tasks</small></span>
+            </label>
+            <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer;">
+              <input type="checkbox" name="can_manage_projects" id="create_perm_projects" value="1" checked style="margin-top: 0.2rem;">
+              <span><strong>Programs & Projects</strong><br><small style="color: var(--gray-500);">Create & Update Projects</small></span>
+            </label>
+            <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer;">
+              <input type="checkbox" name="can_manage_accomplishments" id="create_perm_acc" value="1" checked style="margin-top: 0.2rem;">
+              <span><strong>Accomplishments</strong><br><small style="color: var(--gray-500);">Publish & Edit Posts</small></span>
+            </label>
+            <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer;">
+              <input type="checkbox" name="can_manage_feedbacks" id="create_perm_fb" value="1" checked style="margin-top: 0.2rem;">
+              <span><strong>Student Feedbacks</strong><br><small style="color: var(--gray-500);">View & Reply to Concerns</small></span>
+            </label>
+            <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer;">
+              <input type="checkbox" name="can_view_reports" id="create_perm_reports" value="1" checked style="margin-top: 0.2rem;">
+              <span><strong>Performance Reports</strong><br><small style="color: var(--gray-500);">View Reports & Audit Logs</small></span>
+            </label>
+            <label style="grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer; padding-top: 0.4rem; border-top: 1px dashed var(--gray-200);">
+              <input type="checkbox" name="can_manage_orgs" id="create_perm_orgs" value="1" style="margin-top: 0.2rem;">
+              <span><strong>System-wide Administrator Access</strong><br><small style="color: var(--gray-500);">Manage All Organizations, Student Accounts & Role Library</small></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-modal-close>Cancel</button>
+        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> Save Role to Library</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ======================================================== -->
+<!-- MODAL: EDIT ROLE & SYSTEM ACCESSIBILITY                  -->
+<!-- ======================================================== -->
+<div class="modal-backdrop" id="editRoleModal">
+  <div class="modal-card" style="max-width: 600px;">
+    <div class="modal-header">
+      <h3 style="font-size: 1.2rem; font-weight: 700; color: var(--dark);"><i class="fa-solid fa-sliders" style="color: var(--primary);"></i> Edit Role & System Accessibility</h3>
+      <button class="close-btn" data-modal-close>&times;</button>
+    </div>
+
+    <form method="POST" action="users.php">
+      <input type="hidden" name="action" value="update_role">
+      <input type="hidden" name="role_id" id="edit_role_id">
+
+      <div class="modal-body">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label">Role Title <span style="color: red;">*</span></label>
+            <input type="text" name="role_name" id="edit_role_name" class="form-control" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Role Equivalent (Like...) <span style="color: red;">*</span></label>
+            <select name="base_role" id="edit_base_role" class="form-control" onchange="applyBaseRoleTemplate('edit', this.value)" required>
+              <option value="President">President (Executive Leader)</option>
+              <option value="Vice President">Vice President (Co-Executive)</option>
+              <option value="Secretary">Secretary (Officer Access)</option>
+              <option value="Treasurer">Treasurer (Officer Access)</option>
+              <option value="Officer">Officer (Standard Access)</option>
+              <option value="Admin">Admin (System-wide Access)</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label">Badge Color Style</label>
+            <select name="badge_style" id="edit_badge_style" class="form-control">
+              <option value="badge-role-president">Crimson Red (President Style)</option>
+              <option value="badge-role-vp">Sky Blue (Vice President Style)</option>
+              <option value="badge-role-secretary">Emerald Green (Secretary Style)</option>
+              <option value="badge-role-treasurer">Amber Gold (Treasurer Style)</option>
+              <option value="badge-role-officer">Slate Gray (Officer Style)</option>
+              <option value="badge-role-admin">Royal Purple (Admin Style)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Description</label>
+            <input type="text" name="description" id="edit_role_description" class="form-control">
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 0;">
+          <label class="form-label" style="margin-bottom: 0.5rem;"><i class="fa-solid fa-shield-halved" style="color: var(--primary);"></i> System Accessibility & Module Permissions</label>
+          <div style="background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: var(--radius-sm); padding: 0.85rem; display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem;">
+            <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer;">
+              <input type="checkbox" name="can_manage_users" id="edit_perm_users" value="1" style="margin-top: 0.2rem;">
+              <span><strong>User Management</strong><br><small style="color: var(--gray-500);">Add/Edit Organization Officers</small></span>
+            </label>
+            <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer;">
+              <input type="checkbox" name="can_manage_tasks" id="edit_perm_tasks" value="1" style="margin-top: 0.2rem;">
+              <span><strong>Task Organizer & Assign</strong><br><small style="color: var(--gray-500);">Create, Edit & Assign Tasks</small></span>
+            </label>
+            <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer;">
+              <input type="checkbox" name="can_manage_projects" id="edit_perm_projects" value="1" style="margin-top: 0.2rem;">
+              <span><strong>Programs & Projects</strong><br><small style="color: var(--gray-500);">Create & Update Projects</small></span>
+            </label>
+            <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer;">
+              <input type="checkbox" name="can_manage_accomplishments" id="edit_perm_acc" value="1" style="margin-top: 0.2rem;">
+              <span><strong>Accomplishments</strong><br><small style="color: var(--gray-500);">Publish & Edit Posts</small></span>
+            </label>
+            <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer;">
+              <input type="checkbox" name="can_manage_feedbacks" id="edit_perm_fb" value="1" style="margin-top: 0.2rem;">
+              <span><strong>Student Feedbacks</strong><br><small style="color: var(--gray-500);">View & Reply to Concerns</small></span>
+            </label>
+            <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer;">
+              <input type="checkbox" name="can_view_reports" id="edit_perm_reports" value="1" style="margin-top: 0.2rem;">
+              <span><strong>Performance Reports</strong><br><small style="color: var(--gray-500);">View Reports & Audit Logs</small></span>
+            </label>
+            <label style="grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; cursor: pointer; padding-top: 0.4rem; border-top: 1px dashed var(--gray-200);">
+              <input type="checkbox" name="can_manage_orgs" id="edit_perm_orgs" value="1" style="margin-top: 0.2rem;">
+              <span><strong>System-wide Administrator Access</strong><br><small style="color: var(--gray-500);">Manage All Organizations, Student Accounts & Role Library</small></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-modal-close>Cancel</button>
+        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> Update Role & Access</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- ======================================================== -->
 <!-- MODAL: ADD NEW STUDENT ACCOUNT                           -->
 <!-- ======================================================== -->
@@ -814,7 +1294,7 @@ include_once __DIR__ . '/../includes/header.php';
 <?php endif; ?>
 
 <script>
-// Switch between Leaders tab and Students tab
+// Switch between Leaders, Students, and Role Library tabs
 function switchUserTab(tabName) {
   var btns = document.querySelectorAll('.user-tab-btn');
   var panes = document.querySelectorAll('.user-tab-pane');
@@ -823,12 +1303,20 @@ function switchUserTab(tabName) {
   panes.forEach(function(pane) { pane.classList.remove('active'); });
 
   if (tabName === 'students') {
-    if (btns[1]) btns[1].classList.add('active');
+    var btnSt = document.getElementById('tab-btn-students');
+    if (btnSt) btnSt.classList.add('active');
     var stPane = document.getElementById('tab-students');
     if (stPane) stPane.classList.add('active');
     history.replaceState(null, '', 'users.php?tab=students');
+  } else if (tabName === 'roles') {
+    var btnRl = document.getElementById('tab-btn-roles');
+    if (btnRl) btnRl.classList.add('active');
+    var rlPane = document.getElementById('tab-roles');
+    if (rlPane) rlPane.classList.add('active');
+    history.replaceState(null, '', 'users.php?tab=roles');
   } else {
-    if (btns[0]) btns[0].classList.add('active');
+    var btnLd = document.getElementById('tab-btn-leaders');
+    if (btnLd) btnLd.classList.add('active');
     var ldPane = document.getElementById('tab-leaders');
     if (ldPane) ldPane.classList.add('active');
     history.replaceState(null, '', 'users.php?tab=leaders');
@@ -845,12 +1333,91 @@ function openUserEditModal(user) {
   if (orgField) {
     orgField.value = user.org_id;
   }
-  document.getElementById('edit_role').value = user.role;
+  var roleSelect = document.getElementById('edit_role');
+  if (roleSelect) {
+    // Ensure option exists if legacy custom role
+    var exists = false;
+    for (var i = 0; i < roleSelect.options.length; i++) {
+      if (roleSelect.options[i].value === user.role) {
+        exists = true;
+        break;
+      }
+    }
+    if (!exists && user.role) {
+      var opt = document.createElement('option');
+      opt.value = user.role;
+      opt.textContent = user.role;
+      roleSelect.appendChild(opt);
+    }
+    roleSelect.value = user.role;
+  }
   
   document.getElementById('editUserModal').classList.add('active');
 }
 
 <?php if ($is_admin): ?>
+// Auto-fill accessibility checkboxes & badge style when selecting a Base Role Template ("Like President", etc.)
+function applyBaseRoleTemplate(prefix, baseRole) {
+  var isAdmin = (baseRole === 'Admin');
+  var isExec = (baseRole === 'President' || baseRole === 'Vice President' || isAdmin);
+
+  var badgeMap = {
+    'Admin': 'badge-role-admin',
+    'President': 'badge-role-president',
+    'Vice President': 'badge-role-vp',
+    'Secretary': 'badge-role-secretary',
+    'Treasurer': 'badge-role-treasurer',
+    'Officer': 'badge-role-officer'
+  };
+
+  var badgeSel = document.getElementById(prefix + '_badge_style');
+  if (badgeSel && badgeMap[baseRole]) {
+    badgeSel.value = badgeMap[baseRole];
+  }
+
+  var chkUsers = document.getElementById(prefix + '_perm_users');
+  var chkTasks = document.getElementById(prefix + '_perm_tasks');
+  var chkProj = document.getElementById(prefix + '_perm_projects');
+  var chkAcc = document.getElementById(prefix + '_perm_acc');
+  var chkFb = document.getElementById(prefix + '_perm_fb');
+  var chkRep = document.getElementById(prefix + '_perm_reports');
+  var chkOrgs = document.getElementById(prefix + '_perm_orgs');
+
+  if (chkUsers) chkUsers.checked = isExec;
+  if (chkTasks) chkTasks.checked = isExec;
+  if (chkProj) chkProj.checked = true;
+  if (chkAcc) chkAcc.checked = true;
+  if (chkFb) chkFb.checked = true;
+  if (chkRep) chkRep.checked = true;
+  if (chkOrgs) chkOrgs.checked = isAdmin;
+}
+
+// Open Role Edit Modal
+function openRoleEditModal(role) {
+  document.getElementById('edit_role_id').value = role.id;
+  var nameInput = document.getElementById('edit_role_name');
+  var baseSelect = document.getElementById('edit_base_role');
+  nameInput.value = role.role_name;
+  baseSelect.value = role.base_role || 'Officer';
+
+  var isSystem = parseInt(role.is_system, 10) === 1;
+  nameInput.readOnly = isSystem;
+  nameInput.style.backgroundColor = isSystem ? 'var(--gray-100)' : '';
+
+  document.getElementById('edit_badge_style').value = role.badge_style || 'badge-role-officer';
+  document.getElementById('edit_role_description').value = role.description || '';
+
+  document.getElementById('edit_perm_users').checked = parseInt(role.can_manage_users, 10) === 1;
+  document.getElementById('edit_perm_tasks').checked = parseInt(role.can_manage_tasks, 10) === 1;
+  document.getElementById('edit_perm_projects').checked = parseInt(role.can_manage_projects, 10) === 1;
+  document.getElementById('edit_perm_acc').checked = parseInt(role.can_manage_accomplishments, 10) === 1;
+  document.getElementById('edit_perm_fb').checked = parseInt(role.can_manage_feedbacks, 10) === 1;
+  document.getElementById('edit_perm_reports').checked = parseInt(role.can_view_reports, 10) === 1;
+  document.getElementById('edit_perm_orgs').checked = parseInt(role.can_manage_orgs, 10) === 1;
+
+  document.getElementById('editRoleModal').classList.add('active');
+}
+
 // Open Student Edit Modal
 function openStudentEditModal(student) {
   document.getElementById('edit_student_id').value = student.id;
@@ -868,6 +1435,8 @@ document.addEventListener('DOMContentLoaded', function() {
   var hash = window.location.hash;
   if (hash === '#tab-students') {
     switchUserTab('students');
+  } else if (hash === '#tab-roles') {
+    switchUserTab('roles');
   } else if (hash === '#tab-leaders') {
     switchUserTab('leaders');
   }

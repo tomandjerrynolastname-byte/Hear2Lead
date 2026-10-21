@@ -5,10 +5,11 @@ require_once __DIR__ . '/../includes/auth_check.php';
 
 $current_role = $_SESSION['user_role'] ?? 'Officer';
 $current_user_name = $_SESSION['user_name'] ?? '';
-$is_admin = ($current_role === 'Admin');
-$is_pres_or_vp = in_array($current_role, ['President', 'Vice President'], true);
-$can_manage_users = ($is_admin || $is_pres_or_vp);
-$can_manage_tasks = ($is_admin || $is_pres_or_vp);
+$role_perms = getRolePermissions($current_role, $pdo);
+$is_admin = !empty($role_perms['is_admin']);
+$is_pres_or_vp = !empty($role_perms['is_pres_or_vp']);
+$can_manage_users = !empty($role_perms['can_manage_users']);
+$can_manage_tasks = !empty($role_perms['can_manage_tasks']);
 
 // Organization scoping
 $selected_org_id = 0;
@@ -41,12 +42,8 @@ if ($selected_org_id > 0) {
     $active_org_acronym = 'System-wide';
 }
 
-// Automatically update task statuses to 'Overdue'
-if ($selected_org_id > 0) {
-    $pdo->exec("UPDATE tasks SET status = 'Overdue' WHERE org_id = $selected_org_id AND deadline < CURDATE() AND status != 'Accomplished'");
-} else {
-    $pdo->exec("UPDATE tasks SET status = 'Overdue' WHERE deadline < CURDATE() AND status != 'Accomplished'");
-}
+// Automatically update task statuses to 'Overdue' and record notification logs
+syncOverdueTasks($pdo);
 
 // 1. Fetch Task Statistics
 $task_conds = ["1=1"];

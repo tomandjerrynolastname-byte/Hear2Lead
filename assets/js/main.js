@@ -510,3 +510,52 @@ window.toggleStepperLogs = function(btn) {
   }
 };
 
+// Header Notification Bell Tabs & Mark-As-Read Logic
+window.switchHeaderNotifTab = function(tab) {
+  const btnTasks = document.getElementById('notifTabBtnTasks');
+  const btnLogins = document.getElementById('notifTabBtnLogins');
+  const btnAct = document.getElementById('notifTabBtnActivity');
+  const paneTasks = document.getElementById('notifPaneTasks');
+  const paneLogins = document.getElementById('notifPaneLogins');
+  const paneAct = document.getElementById('notifPaneActivity');
+
+  [btnTasks, btnLogins, btnAct].forEach(b => { if (b) b.classList.remove('active'); });
+  [paneTasks, paneLogins, paneAct].forEach(p => { if (p) p.style.display = 'none'; });
+
+  if (tab === 'activity') {
+    if (btnAct) btnAct.classList.add('active');
+    if (paneAct) paneAct.style.display = 'block';
+  } else if (tab === 'logins') {
+    if (btnLogins) btnLogins.classList.add('active');
+    if (paneLogins) paneLogins.style.display = 'block';
+  } else {
+    if (btnTasks) btnTasks.classList.add('active');
+    if (paneTasks) paneTasks.style.display = 'block';
+  }
+};
+
+window.markHeaderNotifsRead = function(latestId) {
+  const badge = document.getElementById('headerNotifBadge');
+  if (badge) {
+    badge.style.display = 'none';
+  }
+  try {
+    localStorage.setItem('hear2lead_read_notif_id', String(latestId || 0));
+  } catch (e) {}
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  const notifDrop = document.getElementById('headerNotifDropdown');
+  const badge = document.getElementById('headerNotifBadge');
+  if (notifDrop && badge) {
+    const latestId = parseInt(notifDrop.getAttribute('data-latest-id') || '0', 10);
+    try {
+      const readId = parseInt(localStorage.getItem('hear2lead_read_notif_id') || '0', 10);
+      if (latestId > 0 && readId >= latestId) {
+        badge.style.display = 'none';
+      }
+    } catch (e) {}
+  }
+});
+
+

@@ -6,7 +6,12 @@ require_once __DIR__ . '/../includes/auth_check.php';
 $current_user_id = intval($_SESSION['user_id'] ?? 0);
 $current_user_name = $_SESSION['user_name'] ?? 'Officer';
 $current_role = $_SESSION['user_role'] ?? 'Officer';
-$is_admin = ($current_role === 'Admin');
+$role_perms = getRolePermissions($current_role, $pdo);
+$is_admin = !empty($role_perms['is_admin']);
+if (empty($role_perms['can_manage_feedbacks'])) {
+    header("Location: dashboard.php?error=" . urlencode("Access denied. Your role ($current_role) does not have access to Feedbacks."));
+    exit;
+}
 $current_org_id = intval($_SESSION['org_id']);
 $filter_org = $is_admin ? (isset($_GET['org_id']) ? intval($_GET['org_id']) : 0) : $current_org_id;
 

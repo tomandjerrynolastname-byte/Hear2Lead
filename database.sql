@@ -23,6 +23,34 @@ INSERT INTO `organizations` (`id`, `name`, `acronym`, `description`, `category`)
 (3, 'Computer Studies Society', 'CSS', 'Promoting technological literacy, innovation, and digital excellence.', 'Academic');
 
 -- --------------------------------------------------------
+-- Table: user_roles (Dynamic / Custom Role Library & System Accessibility)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `user_roles` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `role_name` VARCHAR(100) NOT NULL UNIQUE,
+  `base_role` VARCHAR(50) NOT NULL DEFAULT 'Officer',
+  `description` VARCHAR(255) DEFAULT NULL,
+  `badge_style` VARCHAR(50) NOT NULL DEFAULT 'badge-role-officer',
+  `can_manage_users` TINYINT(1) NOT NULL DEFAULT 0,
+  `can_manage_tasks` TINYINT(1) NOT NULL DEFAULT 0,
+  `can_manage_projects` TINYINT(1) NOT NULL DEFAULT 1,
+  `can_manage_accomplishments` TINYINT(1) NOT NULL DEFAULT 1,
+  `can_manage_feedbacks` TINYINT(1) NOT NULL DEFAULT 1,
+  `can_view_reports` TINYINT(1) NOT NULL DEFAULT 1,
+  `can_manage_orgs` TINYINT(1) NOT NULL DEFAULT 0,
+  `is_system` TINYINT(1) NOT NULL DEFAULT 0,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT IGNORE INTO `user_roles` (`role_name`, `base_role`, `description`, `badge_style`, `can_manage_users`, `can_manage_tasks`, `can_manage_projects`, `can_manage_accomplishments`, `can_manage_feedbacks`, `can_view_reports`, `can_manage_orgs`, `is_system`) VALUES
+('Admin', 'Admin', 'Full system-wide administrator across all student organizations, student accounts, and role library.', 'badge-role-admin', 1, 1, 1, 1, 1, 1, 1, 1),
+('President', 'President', 'Chief executive leader of an organization. Can manage organization officers and assign/manage tasks.', 'badge-role-president', 1, 1, 1, 1, 1, 1, 0, 1),
+('Vice President', 'Vice President', 'Co-executive leader of an organization. Can manage organization officers and assign/manage tasks.', 'badge-role-vp', 1, 1, 1, 1, 1, 1, 0, 1),
+('Secretary', 'Secretary', 'Organization secretary handling documentation, projects, accomplishments, feedbacks, and reports.', 'badge-role-secretary', 0, 0, 1, 1, 1, 1, 0, 1),
+('Treasurer', 'Treasurer', 'Organization treasurer handling financial records, projects, accomplishments, feedbacks, and reports.', 'badge-role-treasurer', 0, 0, 1, 1, 1, 1, 0, 1),
+('Officer', 'Officer', 'General organization officer with access to assigned tasks, projects, accomplishments, feedbacks, and reports.', 'badge-role-officer', 0, 0, 1, 1, 1, 1, 0, 1);
+
+-- --------------------------------------------------------
 -- Table: users (Leadership Officers & Admins)
 -- --------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `users` (
@@ -32,7 +60,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `username` VARCHAR(50) NOT NULL UNIQUE,
   `email` VARCHAR(100) NOT NULL,
   `password` VARCHAR(255) NOT NULL,
-  `role` ENUM('President', 'Vice President', 'Secretary', 'Treasurer', 'Officer', 'Admin') DEFAULT 'Officer',
+  `role` VARCHAR(100) NOT NULL DEFAULT 'Officer',
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`org_id`) REFERENCES `organizations`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

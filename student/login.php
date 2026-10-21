@@ -43,6 +43,13 @@ if (empty($identifier) || empty($password)) {
         $_SESSION['student_name'] = $student['full_name'];
         $_SESSION['student_grade_section'] = $student['grade_section'];
         $_SESSION['student_email'] = $student['email'];
+        $_SESSION['login_logged'] = true;
+
+        if (function_exists('recordLoginNotification')) {
+            $role_lbl = !empty($student['grade_section']) ? "Student • {$student['grade_section']}" : 'Student';
+            $login_msg = "{$student['full_name']} (LRN: {$student['student_lrn']}) logged in to the Student Portal.";
+            recordLoginNotification('Student', intval($student['id']), null, 'STUDENT', $student['full_name'], $role_lbl, $login_msg, $pdo);
+        }
 
         // Redirect directly into the student portal
         header("Location: index.php");

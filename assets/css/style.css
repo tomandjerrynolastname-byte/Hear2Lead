@@ -2028,3 +2028,696 @@ footer {
   background: var(--white);
 }
 
+/* ==========================================================================
+   Header Notification Bell & Who-Logged Dropdown
+   ========================================================================== */
+.notif-dropdown {
+  position: relative;
+}
+
+.notif-bell-btn {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gray-100);
+  border: 1px solid var(--gray-200);
+  color: var(--gray-700);
+  font-size: 1.05rem;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.notif-bell-btn:hover,
+.notif-dropdown.open .notif-bell-btn {
+  background: var(--primary-light);
+  color: var(--primary);
+  border-color: #c7d2fe;
+}
+
+.notif-count-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: var(--white);
+  font-size: 0.68rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--white);
+  box-shadow: 0 2px 4px rgba(239, 68, 68, 0.35);
+}
+
+.notif-dropdown-menu {
+  width: 390px !important;
+  max-width: calc(100vw - 24px);
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.notif-dropdown-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.85rem 1rem;
+  background: var(--gray-50);
+  border-bottom: 1px solid var(--gray-200);
+}
+
+.notif-header-title {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: var(--dark);
+}
+
+.notif-header-sub {
+  font-size: 0.73rem;
+  color: var(--gray-500);
+  margin-top: 0.1rem;
+}
+
+.notif-mark-read-btn {
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--primary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: var(--transition);
+}
+
+.notif-mark-read-btn:hover {
+  background: var(--primary-light);
+  border-color: var(--primary);
+}
+
+.notif-tabs-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--gray-100);
+  padding: 0.3rem;
+  gap: 0.3rem;
+  border-bottom: 1px solid var(--gray-200);
+}
+
+.notif-tab-btn {
+  border: none;
+  background: transparent;
+  padding: 0.42rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--gray-600);
+  cursor: pointer;
+  transition: var(--transition);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  font-family: inherit;
+}
+
+.notif-tab-btn.active {
+  background: var(--white);
+  color: var(--primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.notif-list-container {
+  max-height: 340px;
+  overflow-y: auto;
+  divide-y: 1px solid var(--gray-100);
+}
+
+.notif-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--gray-100);
+  transition: background 0.15s ease;
+}
+
+.notif-item:hover {
+  background: #f8fafc;
+}
+
+.notif-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: var(--white);
+  font-weight: 800;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.notif-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.notif-item-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.2rem;
+}
+
+.notif-user-name {
+  font-size: 0.84rem;
+  color: var(--dark);
+}
+
+.notif-item-desc {
+  font-size: 0.79rem;
+  color: var(--gray-700);
+  line-height: 1.35;
+  margin-bottom: 0.25rem;
+}
+
+.notif-item-time {
+  font-size: 0.71rem;
+  color: var(--gray-500);
+  font-weight: 600;
+}
+
+.notif-empty-state {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--gray-500);
+  font-size: 0.84rem;
+}
+
+.notif-empty-state i {
+  font-size: 1.6rem;
+  color: var(--gray-400);
+  margin-bottom: 0.4rem;
+  display: block;
+}
+
+.notif-dropdown-footer {
+  padding: 0.6rem 1rem;
+  background: var(--gray-50);
+  border-top: 1px solid var(--gray-200);
+  text-align: center;
+}
+
+.notif-dropdown-footer a {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.notif-dropdown-footer a:hover {
+  text-decoration: underline;
+}
+
+.notif-mobile-label {
+  display: none;
+}
+
+/* ==========================================================================
+   Comprehensive Cross-Device Responsiveness (All Pages)
+   ========================================================================== */
+html,
+body {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+/* Ensure images, iframes, and tables never blow out their parent containers */
+img,
+svg,
+video,
+canvas,
+iframe {
+  max-width: 100%;
+}
+
+/* Tablet & Mobile Navigation Breakpoint (<= 1120px) */
+@media (max-width: 1120px) {
+  .notif-dropdown {
+    width: 100%;
+  }
+
+  .notif-bell-btn {
+    width: 100% !important;
+    height: auto !important;
+    padding: 0.75rem 1rem !important;
+    border-radius: var(--radius-sm) !important;
+    justify-content: flex-start !important;
+    gap: 0.65rem;
+  }
+
+  .notif-mobile-label {
+    display: inline-block;
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--gray-800);
+    flex: 1;
+    text-align: left;
+  }
+
+  .notif-count-badge {
+    position: static;
+    margin-left: auto;
+  }
+
+  .notif-dropdown-menu {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-top: 0.5rem;
+  }
+
+  /* Scrollable nav menu if screen height is short on mobile landscape */
+  .nav-links.active {
+    max-height: calc(100vh - 76px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Medium Tablet Breakpoint (<= 992px) */
+@media (max-width: 992px) {
+  .main-content {
+    padding: 1.5rem 1.15rem;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)) !important;
+    gap: 1rem;
+  }
+
+  .card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)) !important;
+    gap: 1.15rem;
+  }
+
+  .layout-split {
+    grid-template-columns: 1fr !important;
+    gap: 1.25rem;
+  }
+}
+
+/* Tablet & Large Phone Breakpoint (<= 768px) */
+@media (max-width: 768px) {
+  .navbar-container {
+    padding: 0.65rem 1rem;
+  }
+
+  .brand-logo-img {
+    width: 40px;
+    height: 40px;
+  }
+
+  .brand-title {
+    font-size: 1.05rem;
+  }
+
+  .brand-subtitle {
+    font-size: 0.68rem;
+  }
+
+  .main-content {
+    padding: 1.15rem 0.9rem;
+  }
+
+  /* Page Header & Action Buttons */
+  .page-header {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 0.85rem !important;
+    margin-bottom: 1.25rem;
+  }
+
+  .page-title h1 {
+    font-size: 1.4rem;
+    line-height: 1.25;
+  }
+
+  .page-title p {
+    font-size: 0.88rem;
+  }
+
+  .page-header > div:last-child:not(.page-title),
+  .page-header > a.btn,
+  .page-header > button.btn {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .page-header > a.btn,
+  .page-header > button.btn,
+  .page-header > div:last-child:not(.page-title) > .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  /* Horizontal Touch-Scrollable Tab Navigation */
+  .user-tabs-nav {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+    gap: 0.35rem;
+    padding-bottom: 0.25rem;
+    margin-bottom: 1.15rem;
+  }
+
+  .user-tabs-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .user-tab-btn {
+    white-space: nowrap;
+    flex-shrink: 0;
+    padding: 0.6rem 0.95rem;
+    font-size: 0.84rem;
+    gap: 0.45rem;
+    margin-bottom: -0.35rem;
+  }
+
+  /* Filter Bars & Search / Date Controls */
+  .filter-bar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    padding: 0.95rem 1rem !important;
+    gap: 0.75rem !important;
+  }
+
+  .filter-bar form {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    width: 100% !important;
+    gap: 0.75rem !important;
+  }
+
+  .filter-bar form > div,
+  .filter-group {
+    width: 100% !important;
+    min-width: 0 !important;
+    flex-wrap: wrap !important;
+  }
+
+  .filter-bar select.form-control,
+  .filter-bar input.form-control,
+  .filter-group select.form-control,
+  .filter-group input.form-control {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .filter-bar .btn,
+  .filter-bar form .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .calendar-dropdown-wrapper {
+    width: 100%;
+  }
+
+  .calendar-dropdown-wrapper > .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .calendar-popover {
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(290px, calc(100vw - 2rem));
+  }
+
+  /* Card Grids & Stats Grids (Override Inline minmax Styles) */
+  .card-grid,
+  .card-grid[style] {
+    grid-template-columns: 1fr !important;
+    gap: 1rem !important;
+  }
+
+  .stats-grid,
+  .stats-grid[style] {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 0.75rem !important;
+  }
+
+  .stat-card {
+    padding: 1rem;
+    gap: 0.75rem;
+  }
+
+  .stat-icon {
+    width: 44px;
+    height: 44px;
+    font-size: 1.2rem;
+  }
+
+  .stat-info h3 {
+    font-size: 1.35rem;
+  }
+
+  .stat-info p {
+    font-size: 0.75rem;
+  }
+
+  /* Panels & Deadlines */
+  .panel-header {
+    flex-direction: column;
+    align-items: flex-start !important;
+    gap: 0.6rem;
+    padding: 1rem 1.15rem;
+  }
+
+  .panel-header > .btn,
+  .panel-header > a.btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .panel-body {
+    padding: 1.1rem;
+  }
+
+  .deadline-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.85rem;
+  }
+
+  .deadline-meta {
+    width: 100%;
+    text-align: left !important;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  /* Tables */
+  .table-container {
+    margin: 0;
+    border-radius: var(--radius-sm);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table th,
+  .table td {
+    padding: 0.7rem 0.75rem;
+    font-size: 0.84rem;
+  }
+
+  /* Modals */
+  .modal-backdrop {
+    padding: 0.65rem;
+    align-items: flex-end;
+  }
+
+  .modal-card {
+    max-width: 100% !important;
+    max-height: 92vh;
+    border-radius: var(--radius) var(--radius) 12px 12px;
+  }
+
+  .modal-header {
+    padding: 1rem 1.15rem;
+  }
+
+  .modal-header h3 {
+    font-size: 1.02rem;
+  }
+
+  .modal-body {
+    padding: 1.1rem;
+  }
+
+  .modal-footer {
+    padding: 0.85rem 1.1rem;
+    flex-wrap: wrap;
+  }
+
+  .modal-footer .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  /* PDF Preview Iframe on Mobile */
+  #view_acc_pdf_frame {
+    height: 280px !important;
+  }
+
+  /* Print Signatures Grid on Reports Page */
+  .print-signatures {
+    grid-template-columns: 1fr !important;
+    gap: 1.5rem !important;
+  }
+
+  /* Student Hero Banner */
+  .hero-banner {
+    padding: 1.75rem 1.25rem;
+  }
+
+  .hero-banner h1 {
+    font-size: 1.5rem;
+  }
+
+  .hero-banner p {
+    font-size: 0.92rem;
+  }
+
+  .hero-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .hero-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Small Phone & Form Grid Collapse Breakpoint (<= 640px) */
+@media (max-width: 640px) {
+  /* Collapse any inline 2-column form grids in modals or cards into 1 column */
+  .modal-body [style*="grid-template-columns: 1fr 1fr"],
+  .modal-body [style*="grid-template-columns:1fr 1fr"],
+  .panel-body [style*="grid-template-columns: 1fr 1fr"] {
+    grid-template-columns: 1fr !important;
+    gap: 0.75rem !important;
+  }
+
+  /* Notifications Page & Feedback Items */
+  .card [style*="min-width: 260px"],
+  .panel [style*="min-width: 240px"],
+  .filter-bar [style*="min-width: 240px"],
+  .filter-bar [style*="min-width: 220px"],
+  .filter-bar [style*="min-width: 200px"],
+  .filter-bar [style*="min-width: 180px"],
+  .filter-bar [style*="min-width: 170px"],
+  .filter-bar [style*="min-width: 160px"],
+  .filter-bar [style*="min-width: 150px"] {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  /* Vertical Stepper compact spacing on mobile */
+  .log-step {
+    gap: 0.65rem;
+  }
+
+  .log-step-node {
+    width: 28px;
+    height: 28px;
+    font-size: 0.72rem;
+  }
+
+  .log-step::before {
+    left: 13px;
+    top: 28px;
+  }
+
+  .log-step-content {
+    padding: 0.65rem 0.8rem;
+  }
+
+  .log-step-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.3rem;
+  }
+
+  /* Card footers wrap gracefully */
+  .card-footer {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+}
+
+/* Extra-Small Phone Breakpoint (<= 480px) */
+@media (max-width: 480px) {
+  .stats-grid,
+  .stats-grid[style] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Organization card 4-column mini stats -> 2x2 grid on narrow phones */
+  .card [style*="grid-template-columns: repeat(4, 1fr)"] {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 0.5rem !important;
+  }
+
+  /* Notification Bell 3-tab switcher text sizing */
+  .notif-tabs-bar {
+    gap: 0.2rem;
+    padding: 0.25rem;
+  }
+
+  .notif-tab-btn {
+    font-size: 0.69rem;
+    padding: 0.38rem 0.25rem;
+    gap: 0.25rem;
+  }
+
+  .landing-title {
+    font-size: 1.55rem;
+  }
+
+  .landing-subtitle {
+    font-size: 0.92rem;
+  }
+
+  .portal-choice-card {
+    padding: 1.35rem 1.1rem;
+  }
+
+  .footer-content {
+    flex-direction: column;
+    text-align: center;
+    gap: 0.5rem;
+  }
+}

@@ -6,9 +6,10 @@ require_once __DIR__ . '/../includes/auth_check.php';
 $current_user_id = intval($_SESSION['user_id'] ?? 0);
 $current_role = $_SESSION['user_role'] ?? 'Officer';
 $current_user_name = $_SESSION['user_name'] ?? '';
-$is_admin = ($current_role === 'Admin');
-$is_pres_or_vp = in_array($current_role, ['President', 'Vice President'], true);
-$can_manage_tasks = ($is_admin || $is_pres_or_vp);
+$role_perms = getRolePermissions($current_role, $pdo);
+$is_admin = !empty($role_perms['is_admin']);
+$is_pres_or_vp = !empty($role_perms['is_pres_or_vp']);
+$can_manage_tasks = !empty($role_perms['can_manage_tasks']);
 
 $current_org_id = intval($_SESSION['org_id']);
 $filter_org = $is_admin ? (isset($_GET['org_id']) ? intval($_GET['org_id']) : 0) : $current_org_id;
@@ -16,19 +17,15 @@ $filter_org = $is_admin ? (isset($_GET['org_id']) ? intval($_GET['org_id']) : 0)
 $success_msg = '';
 $error_msg = '';
 
-// Update overdue tasks automatically
-if ($filter_org > 0) {
-    $pdo->exec("UPDATE tasks SET status = 'Overdue' WHERE org_id = $filter_org AND deadline < CURDATE() AND status != 'Accomplished'");
-} else {
-    $pdo->exec("UPDATE tasks SET status = 'Overdue' WHERE deadline < CURDATE() AND status != 'Accomplished'");
-}
+// Update overdue tasks automatically and record notification logs
+syncOverdueTasks($pdo);
 
-// 1. Handle Task Actions (Only Admin, President, and Vice President can add/edit/delete tasks)
+// 1. Handle Task Actions (Only Admin, President, Vice President, or Custom Roles with Task Management permission can add/edit/delete tasks)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     if (!$can_manage_tasks) {
-        $error_msg = "Permission denied. Only Admin, President, and Vice President can add or modify tasks.";
+        $error_msg = "Permission denied. Your role ($current_role) does not have permission to add or modify tasks.";
     } else {
         if ($action === 'create_task') {
             $title = trim($_POST['title'] ?? '');
