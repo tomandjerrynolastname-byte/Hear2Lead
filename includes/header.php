@@ -87,6 +87,9 @@ if ($is_officer_logged_in && isset($pdo)) {
                 UNION ALL
                 SELECT al.id, 'Accomplishment' as module_name, al.user_name, al.user_role, al.action_type, al.log_details, al.created_at, a.org_id, o.acronym as org_acronym
                 FROM accomplishment_logs al JOIN accomplishments a ON al.acc_id = a.id LEFT JOIN organizations o ON a.org_id = o.id
+                UNION ALL
+                SELECT sl.id, 'Student Account' as module_name, sl.user_name, sl.user_role, sl.action_type, CONCAT(sl.student_name, ' (LRN: ', sl.student_lrn, ') — ', sl.log_details) as log_details, sl.created_at, NULL as org_id, 'STUDENT' as org_acronym
+                FROM student_logs sl
             ) combined_logs ORDER BY created_at DESC LIMIT 12";
             $header_activity_notifs = $pdo->query($sql_act)->fetchAll();
             if (!empty($header_activity_notifs)) {
@@ -103,6 +106,14 @@ $notif_total_count = $is_admin
     ? (count($header_task_reminders) + count($header_login_notifs) + count($header_activity_notifs))
     : count($header_task_reminders);
 $notif_signature_id = $latest_notif_id * 10000 + $latest_act_id * 100 + count($header_task_reminders) * 10 + $urgent_reminder_count;
+$header_pending_students = 0;
+if ($is_officer_logged_in && $can_manage_users && isset($pdo)) {
+    try {
+        $header_pending_students = intval($pdo->query("SELECT COUNT(*) FROM students WHERE status = 'Pending'")->fetchColumn());
+    } catch (PDOException $e) {
+        $header_pending_students = 0;
+    }
+}
 $default_header_notif_tab = ($is_admin && empty($header_task_reminders)) ? 'logins' : 'tasks';
 ?>
 <!DOCTYPE html>
@@ -177,7 +188,14 @@ $default_header_notif_tab = ($is_admin && empty($header_task_reminders)) ? 'logi
             <li><a href="../leadership/reports.php" class="nav-link <?= $current_page == 'reports.php' ? 'active' : '' ?>"><i class="fa-solid fa-chart-pie"></i> Reports</a></li>
           <?php endif; ?>
           <?php if ($can_manage_users): ?>
-            <li><a href="../leadership/users.php" class="nav-link <?= $current_page == 'users.php' ? 'active' : '' ?>"><i class="fa-solid fa-users-gear"></i> Users</a></li>
+            <li>
+              <a href="../leadership/users.php" class="nav-link <?= $current_page == 'users.php' ? 'active' : '' ?>">
+                <i class="fa-solid fa-users-gear"></i> Users
+                <?php if ($header_pending_students > 0): ?>
+                  <span class="badge" style="background: #dc2626; color: white; font-size: 0.65rem; padding: 2px 6px; border-radius: 10px; margin-left: 2px; font-weight: 800; vertical-align: middle;" title="<?= $header_pending_students ?> student registration(s) pending approval"><?= $header_pending_students ?></span>
+                <?php endif; ?>
+              </a>
+            </li>
           <?php endif; ?>
           <?php if ($can_manage_orgs): ?>
             <li><a href="../leadership/organizations.php" class="nav-link <?= $current_page == 'organizations.php' ? 'active' : '' ?>"><i class="fa-solid fa-sitemap"></i> Orgs</a></li>
@@ -225,6 +243,13 @@ $default_header_notif_tab = ($is_admin && empty($header_task_reminders)) ? 'logi
                     <i class="fa-solid fa-list-check"></i> My Assigned Task Reminders (<?= count($header_task_reminders) ?>)
                   </button>
                 </div>
+              <?php endif; ?>
+
+              <?php if (!empty($header_pending_students)): ?>
+                <a href="../leadership/users.php?tab=students&student_status=pending" style="display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.85rem; background: #fffbeb; border-bottom: 1.5px solid #fde68a; text-decoration: none; color: #92400e; font-size: 0.8rem; font-weight: 700;">
+                  <span><i class="fa-solid fa-clock" style="color: #d97706; margin-right: 4px;"></i> <?= $header_pending_students ?> Student Registration(s) Pending Approval</span>
+                  <span style="background: #d97706; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem;">Review</span>
+                </a>
               <?php endif; ?>
 
               <!-- Pane 1: Assigned Tasks, Tomorrow Deadline Reminders & Overdue Alerts -->

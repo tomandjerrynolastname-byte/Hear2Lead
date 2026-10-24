@@ -6,6 +6,7 @@ require_once __DIR__ . '/../includes/auth_check.php';
 $current_user_id = intval($_SESSION['user_id']);
 $current_org_id = intval($_SESSION['org_id']);
 $current_role = $_SESSION['user_role'] ?? 'Officer';
+$current_user_name = $_SESSION['user_name'] ?? 'Administrator';
 
 $role_perms = getRolePermissions($current_role, $pdo);
 $is_admin = !empty($role_perms['is_admin']);
@@ -169,10 +170,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ==========================================
     // 2. STUDENT ACCOUNT ACTIONS (Admin Only)
     // ==========================================
-    if (in_array($action, ['create_student', 'update_student', 'delete_student'])) {
+    if (in_array($action, ['create_student', 'update_student', 'delete_student', 'approve_student', 'reject_student'], true)) {
         $active_tab = 'students';
         if (!$is_admin) {
-            $error_msg = "Permission denied: Only Administrators can create, edit, or delete student accounts.";
+            $error_msg = "Permission denied: Only Administrators can create, edit, approve, or delete student accounts.";
+        } elseif ($action === 'approve_student') {
+            $student_id = intval($_POST['student_id'] ?? 0);
+            $target_stmt = $pdo->prepare("SELECT * FROM students WHERE id = ?");
+            $target_stmt->execute([$student_id]);
+            $target_student = $target_stmt->fetch();
+            if (!$target_student) {
+                $error_msg = "Target student account was not found.";
+            } else {
+                $prev_status = $target_student['status'] ?? 'Pending';
+                $upd = $pdo->prepare("UPDATE students SET status = 'Approved', approved_by = ?, approved_at = NOW() WHERE id = ?");
+                if ($upd->execute([$current_user_id, $student_id])) {
+                    if (function_exists('recordStudentAccountLog')) {
+                        $action_lbl = ($prev_status === 'Rejected') ? 'Re-Approved' : 'Approved';
+                        $log_msg = "Account approval status changed from '{$prev_status}' to 'Approved' by {$current_user_name} ({$current_role}). Student is now permitted to sign in to the Student Portal.";
+                        recordStudentAccountLog($student_id, $target_student['student_lrn'], $target_student['full_name'], $current_user_id, $current_user_name, $current_role, $action_lbl, $prev_status, 'Approved', $log_msg, $pdo);
+                    }
+                    $success_msg = "Student account for '" . htmlspecialchars($target_student['full_name']) . "' (LRN: " . htmlspecialchars($target_student['student_lrn']) . ") has been APPROVED and logged successfully!";
+                } else {
+                    $error_msg = "Failed to approve student account.";
+                }
+            }
+        } elseif ($action === 'reject_student') {
+            $student_id = intval($_POST['student_id'] ?? 0);
+            $target_stmt = $pdo->prepare("SELECT * FROM students WHERE id = ?");
+            $target_stmt->execute([$student_id]);
+            $target_student = $target_stmt->fetch();
+            if (!$target_student) {
+                $error_msg = "Target student account was not found.";
+            } else {
+                $prev_status = $target_student['status'] ?? 'Pending';
+                $upd = $pdo->prepare("UPDATE students SET status = 'Rejected', approved_by = ?, approved_at = NOW() WHERE id = ?");
+                if ($upd->execute([$current_user_id, $student_id])) {
+                    if (function_exists('recordStudentAccountLog')) {
+                        $action_lbl = ($prev_status === 'Approved') ? 'Revoked / Rejected' : 'Rejected';
+                        $log_msg = "Account approval status changed from '{$prev_status}' to 'Rejected' by {$current_user_name} ({$current_role}). Student portal access blocked.";
+                        recordStudentAccountLog($student_id, $target_student['student_lrn'], $target_student['full_name'], $current_user_id, $current_user_name, $current_role, $action_lbl, $prev_status, 'Rejected', $log_msg, $pdo);
+                    }
+                    $success_msg = "Student account for '" . htmlspecialchars($target_student['full_name']) . "' has been marked as REJECTED and logged.";
+                } else {
+                    $error_msg = "Failed to update student account status.";
+                }
+            }
         } elseif ($action === 'create_student') {
             $student_lrn = trim($_POST['student_lrn'] ?? '');
             $full_name = trim($_POST['full_name'] ?? '');
@@ -189,10 +232,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($check->fetchColumn() > 0) {
                     $error_msg = "A student with this LRN or Email already exists.";
                 } else {
+                    $status = in_array($_POST['status'] ?? '', ['Pending', 'Approved', 'Rejected'], true) ? $_POST['status'] : 'Approved';
+                    $approved_by = ($status === 'Approved') ? $current_user_id : null;
+                    $approved_at = ($status === 'Approved') ? date('Y-m-d H:i:s') : null;
                     $hashed_password = password_hash($password, PASSWORD_BCRYPT);
-                    $stmt = $pdo->prepare("INSERT INTO students (student_lrn, full_name, grade_section, email, password) VALUES (?, ?, ?, ?, ?)");
-                    if ($stmt->execute([$student_lrn, $full_name, $grade_section, $email ?: null, $hashed_password])) {
-                        $success_msg = "Student account for '$full_name' (LRN: $student_lrn) created successfully!";
+                    $stmt = $pdo->prepare("INSERT INTO students (student_lrn, full_name, grade_section, email, password, status, approved_by, approved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                    if ($stmt->execute([$student_lrn, $full_name, $grade_section, $email ?: null, $hashed_password, $status, $approved_by, $approved_at])) {
+                        $new_stu_id = intval($pdo->lastInsertId());
+                        if (function_exists('recordStudentAccountLog')) {
+                            $log_msg = "Student account manually created by {$current_user_name} ({$current_role}) with LRN '{$student_lrn}' ({$grade_section}) and initial status '{$status}'.";
+                            recordStudentAccountLog($new_stu_id, $student_lrn, $full_name, $current_user_id, $current_user_name, $current_role, "Created ({$status})", null, $status, $log_msg, $pdo);
+                        }
+                        $success_msg = "Student account for '$full_name' (LRN: $student_lrn) created and logged with status '$status'!";
                     } else {
                         $error_msg = "Failed to create student account.";
                     }
@@ -215,22 +266,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($check->fetchColumn() > 0) {
                     $error_msg = "Another student is already using this LRN or Email address.";
                 } else {
+                    $old_stmt = $pdo->prepare("SELECT * FROM students WHERE id = ?");
+                    $old_stmt->execute([$student_id]);
+                    $old_stu = $old_stmt->fetch();
+                    $old_status = $old_stu ? ($old_stu['status'] ?? 'Approved') : 'Approved';
+
+                    $status = in_array($_POST['status'] ?? '', ['Pending', 'Approved', 'Rejected'], true) ? $_POST['status'] : 'Approved';
+                    $approved_by_val = ($status === 'Approved') ? $current_user_id : null;
                     if (!empty($new_password)) {
                         $hashed_password = password_hash($new_password, PASSWORD_BCRYPT);
-                        $stmt = $pdo->prepare("UPDATE students SET student_lrn = ?, full_name = ?, grade_section = ?, email = ?, password = ? WHERE id = ?");
-                        $stmt->execute([$student_lrn, $full_name, $grade_section, $email ?: null, $hashed_password, $student_id]);
+                        $stmt = $pdo->prepare("UPDATE students SET student_lrn = ?, full_name = ?, grade_section = ?, email = ?, password = ?, status = ?, approved_by = IF(? = 'Approved' AND approved_by IS NULL, ?, approved_by), approved_at = IF(? = 'Approved' AND approved_at IS NULL, NOW(), approved_at) WHERE id = ?");
+                        $stmt->execute([$student_lrn, $full_name, $grade_section, $email ?: null, $hashed_password, $status, $status, $approved_by_val, $status, $student_id]);
                     } else {
-                        $stmt = $pdo->prepare("UPDATE students SET student_lrn = ?, full_name = ?, grade_section = ?, email = ? WHERE id = ?");
-                        $stmt->execute([$student_lrn, $full_name, $grade_section, $email ?: null, $student_id]);
+                        $stmt = $pdo->prepare("UPDATE students SET student_lrn = ?, full_name = ?, grade_section = ?, email = ?, status = ?, approved_by = IF(? = 'Approved' AND approved_by IS NULL, ?, approved_by), approved_at = IF(? = 'Approved' AND approved_at IS NULL, NOW(), approved_at) WHERE id = ?");
+                        $stmt->execute([$student_lrn, $full_name, $grade_section, $email ?: null, $status, $status, $approved_by_val, $status, $student_id]);
                     }
-                    $success_msg = "Student account updated successfully!";
+
+                    if (function_exists('recordStudentAccountLog')) {
+                        if ($old_status !== $status) {
+                            $action_lbl = "Status Changed to {$status}";
+                            $log_msg = "Account approval status changed from '{$old_status}' to '{$status}' by {$current_user_name} ({$current_role}).";
+                        } else {
+                            $action_lbl = "Account Updated";
+                            $log_msg = "Student profile details updated by {$current_user_name} ({$current_role}). Status remains '{$status}'.";
+                        }
+                        recordStudentAccountLog($student_id, $student_lrn, $full_name, $current_user_id, $current_user_name, $current_role, $action_lbl, $old_status, $status, $log_msg, $pdo);
+                    }
+                    $success_msg = "Student account updated and logged successfully!";
                 }
             }
         } elseif ($action === 'delete_student') {
             $student_id = intval($_POST['student_id'] ?? 0);
+            $old_stmt = $pdo->prepare("SELECT * FROM students WHERE id = ?");
+            $old_stmt->execute([$student_id]);
+            $old_stu = $old_stmt->fetch();
+
             $stmt = $pdo->prepare("DELETE FROM students WHERE id = ?");
             if ($stmt->execute([$student_id])) {
-                $success_msg = "Student account removed successfully.";
+                if ($old_stu && function_exists('recordStudentAccountLog')) {
+                    $prev_status = $old_stu['status'] ?? 'Approved';
+                    $log_msg = "Student account '{$old_stu['full_name']}' (LRN: {$old_stu['student_lrn']}) was deleted by {$current_user_name} ({$current_role}). Previous status was '{$prev_status}'.";
+                    recordStudentAccountLog(null, $old_stu['student_lrn'], $old_stu['full_name'], $current_user_id, $current_user_name, $current_role, 'Account Deleted', $prev_status, 'Deleted', $log_msg, $pdo);
+                }
+                $success_msg = "Student account removed and logged successfully.";
             } else {
                 $error_msg = "Failed to delete student account.";
             }
@@ -437,8 +515,9 @@ if ($is_admin) {
     $leader_count = $stmt_lc->fetchColumn();
 }
 
-// 3. Students Query Scoping
+// 3. Students Query Scoping with Status Filters
 $search_students = trim($_GET['q_students'] ?? '');
+$filter_student_status = trim($_GET['student_status'] ?? 'all');
 $student_where = ["1=1"];
 $student_params = [];
 
@@ -450,13 +529,45 @@ if (!empty($search_students)) {
     $student_params[] = "%$search_students%";
 }
 
+if ($filter_student_status === 'pending') {
+    $student_where[] = "s.status = 'Pending'";
+} elseif ($filter_student_status === 'approved') {
+    $student_where[] = "s.status = 'Approved'";
+} elseif ($filter_student_status === 'rejected') {
+    $student_where[] = "s.status = 'Rejected'";
+}
+
 $student_where_sql = implode(" AND ", $student_where);
-$sql_students = "SELECT * FROM students s WHERE $student_where_sql ORDER BY s.full_name ASC";
+$sql_students = "SELECT s.*, u.full_name as approver_name FROM students s LEFT JOIN users u ON s.approved_by = u.id WHERE $student_where_sql ORDER BY CASE s.status WHEN 'Pending' THEN 1 WHEN 'Approved' THEN 2 ELSE 3 END ASC, s.created_at DESC";
 $stmt_students = $pdo->prepare($sql_students);
 $stmt_students->execute($student_params);
 $students = $stmt_students->fetchAll();
 
-$student_count = $pdo->query("SELECT COUNT(*) FROM students")->fetchColumn();
+$student_count = intval($pdo->query("SELECT COUNT(*) FROM students")->fetchColumn());
+$pending_students_count = intval($pdo->query("SELECT COUNT(*) FROM students WHERE status = 'Pending'")->fetchColumn());
+$approved_students_count = intval($pdo->query("SELECT COUNT(*) FROM students WHERE status = 'Approved'")->fetchColumn());
+$rejected_students_count = intval($pdo->query("SELECT COUNT(*) FROM students WHERE status = 'Rejected'")->fetchColumn());
+
+// Fetch Student Account Approval & Status Logs
+$all_student_logs = [];
+$student_logs_map = [];
+$students_map_by_id = [];
+foreach ($students as $st_item) {
+    $students_map_by_id[intval($st_item['id'])] = $st_item;
+}
+try {
+    $stmt_slogs = $pdo->query("SELECT sl.*, DATE_FORMAT(sl.created_at, '%b %d, %Y • %h:%i %p') as formatted_time FROM student_logs sl ORDER BY sl.created_at DESC, sl.id DESC");
+    $all_student_logs = $stmt_slogs->fetchAll();
+    foreach ($all_student_logs as $sl) {
+        $sid = intval($sl['student_id'] ?? 0);
+        if ($sid > 0) {
+            $student_logs_map[$sid][] = $sl;
+        }
+    }
+} catch (PDOException $e) {
+    $all_student_logs = [];
+    $student_logs_map = [];
+}
 $role_count = count($role_library);
 
 include_once __DIR__ . '/../includes/header.php';
@@ -525,6 +636,11 @@ include_once __DIR__ . '/../includes/header.php';
     <i class="fa-solid fa-graduation-cap"></i>
     <span>Student Accounts</span>
     <span class="user-tab-badge"><?= $student_count ?></span>
+    <?php if (!empty($pending_students_count)): ?>
+      <span class="badge" style="background: #dc2626; color: #ffffff; font-size: 0.7rem; padding: 2px 7px; border-radius: 12px; margin-left: 4px; font-weight: 800; display: inline-flex; align-items: center; gap: 3px;" title="<?= $pending_students_count ?> student registration(s) pending approval">
+        <i class="fa-solid fa-clock"></i> <?= $pending_students_count ?> Pending
+      </span>
+    <?php endif; ?>
   </button>
   <?php if ($is_admin): ?>
     <button type="button" class="user-tab-btn <?= $active_tab === 'roles' ? 'active' : '' ?>" id="tab-btn-roles" onclick="switchUserTab('roles')">
@@ -653,10 +769,32 @@ include_once __DIR__ . '/../includes/header.php';
 <!-- ======================================================== -->
 <div class="user-tab-pane <?= $active_tab === 'students' ? 'active' : '' ?>" id="tab-students">
 
+  <!-- Students Filter & Status Quick Tabs -->
+  <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.85rem; padding: 0.6rem 0.85rem; background: #ffffff; border: 1px solid var(--gray-200); border-radius: var(--radius-md); box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
+    <span style="font-size: 0.82rem; font-weight: 700; color: var(--gray-600); margin-right: 0.25rem;"><i class="fa-solid fa-filter" style="color: var(--primary);"></i> Status Filter:</span>
+    
+    <a href="users.php?tab=students&student_status=all<?= !empty($search_students) ? '&q_students=' . urlencode($search_students) : '' ?>" class="btn btn-sm <?= $filter_student_status === 'all' ? 'btn-primary' : 'btn-secondary' ?>" style="font-size: 0.8rem; padding: 0.35rem 0.75rem;">
+      All (<?= $student_count ?>)
+    </a>
+    
+    <a href="users.php?tab=students&student_status=pending<?= !empty($search_students) ? '&q_students=' . urlencode($search_students) : '' ?>" class="btn btn-sm <?= $filter_student_status === 'pending' ? 'btn-warning' : 'btn-secondary' ?>" style="font-size: 0.8rem; padding: 0.35rem 0.75rem; <?= $pending_students_count > 0 && $filter_student_status !== 'pending' ? 'border-color: #f59e0b; color: #b45309; background: #fffbeb;' : '' ?>">
+      <i class="fa-solid fa-clock"></i> Pending Approval (<?= $pending_students_count ?>)
+    </a>
+    
+    <a href="users.php?tab=students&student_status=approved<?= !empty($search_students) ? '&q_students=' . urlencode($search_students) : '' ?>" class="btn btn-sm <?= $filter_student_status === 'approved' ? 'btn-success' : 'btn-secondary' ?>" style="font-size: 0.8rem; padding: 0.35rem 0.75rem;">
+      <i class="fa-solid fa-circle-check"></i> Approved (<?= $approved_students_count ?>)
+    </a>
+    
+    <a href="users.php?tab=students&student_status=rejected<?= !empty($search_students) ? '&q_students=' . urlencode($search_students) : '' ?>" class="btn btn-sm <?= $filter_student_status === 'rejected' ? 'btn-danger' : 'btn-secondary' ?>" style="font-size: 0.8rem; padding: 0.35rem 0.75rem;">
+      <i class="fa-solid fa-circle-xmark"></i> Rejected (<?= $rejected_students_count ?>)
+    </a>
+  </div>
+
   <!-- Students Filter & Search Bar -->
   <div class="filter-bar">
     <form method="GET" action="users.php" style="display: flex; gap: 1rem; align-items: center; width: 100%; flex-wrap: wrap;">
       <input type="hidden" name="tab" value="students">
+      <input type="hidden" name="student_status" value="<?= htmlspecialchars($filter_student_status) ?>">
 
       <div style="flex: 2; min-width: 260px; position: relative;">
         <input type="text" name="q_students" class="form-control" placeholder="Search students by name, LRN, grade/section, or email..." value="<?= htmlspecialchars($search_students) ?>" style="padding-left: 2.25rem;">
@@ -665,7 +803,7 @@ include_once __DIR__ . '/../includes/header.php';
 
       <button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Search</button>
       
-      <?php if (!empty($search_students)): ?>
+      <?php if (!empty($search_students) || $filter_student_status !== 'all'): ?>
         <a href="users.php?tab=students" class="btn btn-secondary btn-sm"><i class="fa-solid fa-rotate-left"></i> Reset Filter</a>
       <?php endif; ?>
     </form>
@@ -680,23 +818,23 @@ include_once __DIR__ . '/../includes/header.php';
           <th>Student LRN</th>
           <th>Grade & Section</th>
           <th>Email Address</th>
+          <th>Account Status</th>
           <th>Date Registered</th>
-          <?php if ($is_admin): ?>
-            <th style="text-align: right;">Actions</th>
-          <?php endif; ?>
+          <th style="text-align: right;">Actions & Logs</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($students)): ?>
           <tr>
-            <td colspan="<?= $is_admin ? '6' : '5' ?>" style="text-align: center; color: var(--gray-500); padding: 2.5rem;">
+            <td colspan="<?= $is_admin ? '7' : '6' ?>" style="text-align: center; color: var(--gray-500); padding: 2.5rem;">
               <i class="fa-solid fa-graduation-cap" style="font-size: 2rem; color: var(--gray-400); margin-bottom: 0.5rem; display: block;"></i>
-              No student accounts found matching your search.
+              No student accounts found matching your filter criteria.
             </td>
           </tr>
         <?php else: ?>
           <?php foreach ($students as $student): ?>
-            <tr>
+            <?php $stu_status = $student['status'] ?? 'Approved'; ?>
+            <tr style="<?= $stu_status === 'Pending' ? 'background: rgba(254, 243, 199, 0.25);' : '' ?>">
               <td>
                 <strong style="font-size: 0.95rem; color: var(--dark);"><?= htmlspecialchars($student['full_name']) ?></strong>
               </td>
@@ -709,26 +847,149 @@ include_once __DIR__ . '/../includes/header.php';
                   <span style="color: var(--gray-400); font-size: 0.85rem;">None</span>
                 <?php endif; ?>
               </td>
+              <td>
+                <?php if ($stu_status === 'Pending'): ?>
+                  <span class="badge" style="background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; font-weight: 700; padding: 4px 8px; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px;">
+                    <i class="fa-solid fa-clock"></i> Pending Approval
+                  </span>
+                <?php elseif ($stu_status === 'Approved'): ?>
+                  <span class="badge" style="background: #dcfce7; color: #166534; border: 1px solid #22c55e; font-weight: 700; padding: 4px 8px; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px;" title="Approved<?= !empty($student['approved_at']) ? ' on ' . date('M d, Y', strtotime($student['approved_at'])) : '' ?><?= !empty($student['approver_name']) ? ' by ' . htmlspecialchars($student['approver_name']) : '' ?>">
+                    <i class="fa-solid fa-circle-check"></i> Approved
+                  </span>
+                <?php else: ?>
+                  <span class="badge" style="background: #fee2e2; color: #991b1b; border: 1px solid #ef4444; font-weight: 700; padding: 4px 8px; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px;">
+                    <i class="fa-solid fa-circle-xmark"></i> Rejected
+                  </span>
+                <?php endif; ?>
+              </td>
               <td><span style="font-size: 0.8rem; color: var(--gray-600);"><i class="fa-regular fa-clock"></i> <?= date('M d, Y', strtotime($student['created_at'])) ?></span></td>
-              <?php if ($is_admin): ?>
-                <td style="text-align: right;">
-                  <div style="display: inline-flex; gap: 0.4rem; justify-content: flex-end;">
+              <td style="text-align: right;">
+                <?php $stu_log_count = isset($student_logs_map[$student['id']]) ? count($student_logs_map[$student['id']]) : 0; ?>
+                <div style="display: inline-flex; gap: 0.35rem; justify-content: flex-end; align-items: center;">
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="openStudentLogsModal(<?= intval($student['id']) ?>)" title="View Status & Approval History Logs">
+                    <i class="fa-solid fa-clock-rotate-left"></i> Logs (<?= $stu_log_count ?>)
+                  </button>
+                  <?php if ($is_admin): ?>
+                    <?php if ($stu_status === 'Pending'): ?>
+                      <form method="POST" action="users.php" style="display: inline; margin: 0;">
+                        <input type="hidden" name="action" value="approve_student">
+                        <input type="hidden" name="student_id" value="<?= $student['id'] ?>">
+                        <button type="submit" class="btn btn-sm" style="background: #16a34a; color: white; border: none; font-weight: 700; padding: 0.35rem 0.65rem; border-radius: 6px; box-shadow: 0 1px 3px rgba(22, 163, 74, 0.3);" title="Approve student account">
+                          <i class="fa-solid fa-check"></i> Approve
+                        </button>
+                      </form>
+                      <form method="POST" action="users.php" style="display: inline; margin: 0;">
+                        <input type="hidden" name="action" value="reject_student">
+                        <input type="hidden" name="student_id" value="<?= $student['id'] ?>">
+                        <button type="submit" class="btn btn-sm" style="background: #fee2e2; color: #991b1b; border: 1px solid #ef4444; font-weight: 600; padding: 0.35rem 0.65rem; border-radius: 6px;" title="Reject student account">
+                          <i class="fa-solid fa-ban"></i> Reject
+                        </button>
+                      </form>
+                    <?php elseif ($stu_status === 'Approved'): ?>
+                      <form method="POST" action="users.php" style="display: inline; margin: 0;">
+                        <input type="hidden" name="action" value="reject_student">
+                        <input type="hidden" name="student_id" value="<?= $student['id'] ?>">
+                        <button type="submit" class="btn btn-secondary btn-sm" style="color: #b91c1c; padding: 0.35rem 0.6rem;" title="Revoke Approval">
+                          <i class="fa-solid fa-ban"></i> Revoke
+                        </button>
+                      </form>
+                    <?php else: ?>
+                      <form method="POST" action="users.php" style="display: inline; margin: 0;">
+                        <input type="hidden" name="action" value="approve_student">
+                        <input type="hidden" name="student_id" value="<?= $student['id'] ?>">
+                        <button type="submit" class="btn btn-sm" style="background: #16a34a; color: white; border: none; font-weight: 700; padding: 0.35rem 0.65rem; border-radius: 6px;" title="Re-activate / Approve Student">
+                          <i class="fa-solid fa-check"></i> Approve
+                        </button>
+                      </form>
+                    <?php endif; ?>
+
                     <button class="btn btn-secondary btn-sm" onclick='openStudentEditModal(<?= json_encode($student) ?>)' title="Edit Student">
                       <i class="fa-solid fa-pen-to-square"></i> Edit
                     </button>
-                    <form method="POST" action="users.php" onsubmit="return confirmDeleteSwal(event, 'Are you sure you want to delete student account \'<?= htmlspecialchars($student['full_name'], ENT_QUOTES) ?>\' (LRN: <?= htmlspecialchars($student['student_lrn'], ENT_QUOTES) ?>)?', 'Delete Student Account?');" style="display: inline;">
+                    <form method="POST" action="users.php" onsubmit="return confirmDeleteSwal(event, 'Are you sure you want to delete student account \'<?= htmlspecialchars($student['full_name'], ENT_QUOTES) ?>\' (LRN: <?= htmlspecialchars($student['student_lrn'], ENT_QUOTES) ?>)?', 'Delete Student Account?');" style="display: inline; margin: 0;">
                       <input type="hidden" name="action" value="delete_student">
                       <input type="hidden" name="student_id" value="<?= $student['id'] ?>">
                       <button type="submit" class="btn btn-danger btn-sm" title="Delete Student"><i class="fa-solid fa-trash"></i></button>
                     </form>
-                  </div>
-                </td>
-              <?php endif; ?>
+                  <?php endif; ?>
+                </div>
+              </td>
             </tr>
           <?php endforeach; ?>
         <?php endif; ?>
       </tbody>
     </table>
+  </div>
+
+  <!-- Student Account Approval & Status Activity Logs Panel -->
+  <div class="panel-card" style="margin-top: 2rem;">
+    <div class="panel-header">
+      <span><i class="fa-solid fa-clock-rotate-left" style="color: var(--primary);"></i> Student Account Approval & Status Activity Logs</span>
+      <span style="font-size: 0.85rem; color: var(--gray-500);"><?= count($all_student_logs) ?> Total Entries</span>
+    </div>
+
+    <?php if (empty($all_student_logs)): ?>
+      <div style="text-align: center; padding: 2.5rem; color: var(--gray-500);">
+        <i class="fa-solid fa-clock-rotate-left" style="font-size: 2.2rem; color: var(--gray-400); margin-bottom: 0.5rem; display: block;"></i>
+        No student account status logs recorded yet.
+      </div>
+    <?php else: ?>
+      <div class="table-container" style="box-shadow: none; border: none; margin: 0;">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Student Account</th>
+              <th>Action</th>
+              <th>Status Transition</th>
+              <th>Logged By</th>
+              <th>Activity & Change Details</th>
+              <th>Timestamp</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($all_student_logs as $slog):
+              $act_lower = strtolower($slog['action_type'] ?? '');
+              if (strpos($act_lower, 'approv') !== false) {
+                  $slog_badge = 'badge-accomplished';
+              } elseif (strpos($act_lower, 'reject') !== false || strpos($act_lower, 'revok') !== false || strpos($act_lower, 'delet') !== false) {
+                  $slog_badge = 'badge-overdue';
+              } elseif (strpos($act_lower, 'pend') !== false || strpos($act_lower, 'regist') !== false) {
+                  $slog_badge = 'badge-todo';
+              } else {
+                  $slog_badge = 'badge-in-progress';
+              }
+            ?>
+              <tr>
+                <td>
+                  <strong style="color: var(--dark); display: block;"><?= htmlspecialchars($slog['student_name']) ?></strong>
+                  <code style="font-size: 0.78rem;"><?= htmlspecialchars($slog['student_lrn']) ?></code>
+                </td>
+                <td>
+                  <span class="badge <?= $slog_badge ?>"><?= htmlspecialchars($slog['action_type']) ?></span>
+                </td>
+                <td style="white-space: nowrap; font-size: 0.82rem;">
+                  <?php if (!empty($slog['previous_status'])): ?>
+                    <span class="badge badge-planning" style="font-size: 0.72rem;"><?= htmlspecialchars($slog['previous_status']) ?></span>
+                    <i class="fa-solid fa-arrow-right" style="font-size: 0.7rem; color: var(--gray-400); margin: 0 0.25rem;"></i>
+                  <?php endif; ?>
+                  <span class="badge <?= $slog['new_status'] === 'Approved' ? 'badge-accomplished' : ($slog['new_status'] === 'Pending' ? 'badge-todo' : 'badge-overdue') ?>" style="font-size: 0.72rem;">
+                    <?= htmlspecialchars($slog['new_status']) ?>
+                  </span>
+                </td>
+                <td>
+                  <div style="font-weight: 700; color: var(--dark); font-size: 0.88rem;"><?= htmlspecialchars($slog['user_name']) ?></div>
+                  <div style="font-size: 0.75rem; color: var(--gray-500);"><?= htmlspecialchars($slog['user_role']) ?></div>
+                </td>
+                <td style="font-size: 0.86rem; color: var(--gray-800); max-width: 420px;"><?= htmlspecialchars($slog['log_details']) ?></td>
+                <td style="white-space: nowrap; font-size: 0.8rem; color: var(--gray-600);">
+                  <i class="fa-regular fa-clock"></i> <?= htmlspecialchars($slog['formatted_time']) ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    <?php endif; ?>
   </div>
 </div>
 
@@ -1225,9 +1486,20 @@ include_once __DIR__ . '/../includes/header.php';
           </div>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">Password <span style="color: red;">*</span></label>
-          <input type="password" name="password" class="form-control" placeholder="••••••••" required>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label">Password <span style="color: red;">*</span></label>
+            <input type="password" name="password" class="form-control" placeholder="Min 8 chars" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Account Approval Status <span style="color: red;">*</span></label>
+            <select name="status" class="form-control" required>
+              <option value="Approved" selected>Approved (Allowed to sign in)</option>
+              <option value="Pending">Pending (Awaiting approval)</option>
+              <option value="Rejected">Rejected (Login blocked)</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -1278,9 +1550,20 @@ include_once __DIR__ . '/../includes/header.php';
           </div>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">New Password (Leave blank to keep existing password)</label>
-          <input type="password" name="new_password" class="form-control" placeholder="••••••••">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label">New Password (Leave blank to keep current)</label>
+            <input type="password" name="new_password" class="form-control" placeholder="Min 8 chars if changing">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Account Approval Status <span style="color: red;">*</span></label>
+            <select name="status" id="edit_student_status" class="form-control" required>
+              <option value="Approved">Approved (Allowed to sign in)</option>
+              <option value="Pending">Pending (Awaiting approval)</option>
+              <option value="Rejected">Rejected (Login blocked)</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -1292,6 +1575,32 @@ include_once __DIR__ . '/../includes/header.php';
   </div>
 </div>
 <?php endif; ?>
+
+<!-- ======================================================== -->
+<!-- MODAL: VIEW STUDENT ACCOUNT STATUS & APPROVAL LOGS       -->
+<!-- ======================================================== -->
+<div class="modal-backdrop" id="viewStudentLogsModal">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 style="font-size: 1.2rem; font-weight: 700; color: var(--dark);">
+        <i class="fa-solid fa-clock-rotate-left" style="color: var(--primary);"></i> Student Status & Approval Logs
+      </h3>
+      <button class="close-btn" data-modal-close>&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="background: var(--gray-100); padding: 0.85rem 1rem; border-radius: var(--radius-sm); margin-bottom: 1rem; border: 1px solid var(--gray-200);">
+        <div style="font-size: 0.78rem; color: var(--gray-500); text-transform: uppercase; font-weight: 700;">Student Account</div>
+        <div id="log_modal_student_name" style="font-size: 1.05rem; font-weight: 800; color: var(--dark); margin-top: 0.1rem;"></div>
+        <div id="log_modal_student_meta" style="font-size: 0.82rem; color: var(--gray-600); margin-top: 0.25rem;"></div>
+      </div>
+
+      <div id="studentLogsTimelineContainer" class="task-log-timeline"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" data-modal-close>Close</button>
+    </div>
+  </div>
+</div>
 
 <script>
 // Switch between Leaders, Students, and Role Library tabs
@@ -1425,10 +1734,148 @@ function openStudentEditModal(student) {
   document.getElementById('edit_student_fullname').value = student.full_name;
   document.getElementById('edit_student_grade').value = student.grade_section;
   document.getElementById('edit_student_email').value = student.email || '';
+  if (document.getElementById('edit_student_status')) {
+    document.getElementById('edit_student_status').value = student.status || 'Approved';
+  }
   
   document.getElementById('editStudentModal').classList.add('active');
 }
 <?php endif; ?>
+
+const STUDENT_LOGS_MAP = <?= json_encode($student_logs_map) ?>;
+const STUDENTS_BY_ID = <?= json_encode($students_map_by_id) ?>;
+
+function escapeStudentLogHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function toggleStudentStepperLogs(btn) {
+  const wrap = btn.closest('.log-stepper-container');
+  if (!wrap) return;
+  const stepper = wrap.querySelector('.log-stepper');
+  const limit = parseInt(stepper.getAttribute('data-initial-limit') || '2', 10);
+  const steps = stepper.querySelectorAll('.log-step');
+  const expanded = btn.getAttribute('data-expanded') === 'true';
+
+  if (!expanded) {
+    steps.forEach(s => {
+      s.classList.remove('log-step-hidden');
+      s.classList.remove('log-step-last-visible');
+    });
+    btn.setAttribute('data-expanded', 'true');
+    btn.innerHTML = '<i class="fa-solid fa-chevron-up"></i> Show Less';
+  } else {
+    steps.forEach((s, idx) => {
+      if (idx >= limit) {
+        s.classList.add('log-step-hidden');
+      }
+      if (idx === limit - 1 && steps.length > limit) {
+        s.classList.add('log-step-last-visible');
+      }
+    });
+    btn.setAttribute('data-expanded', 'false');
+    const hiddenCount = steps.length - limit;
+    btn.innerHTML = '<i class="fa-solid fa-chevron-down"></i> Show More (' + hiddenCount + ' more ' + (hiddenCount === 1 ? 'log' : 'logs') + ')';
+  }
+}
+
+function openStudentLogsModal(studentId) {
+  const modal = document.getElementById('viewStudentLogsModal');
+  const titleEl = document.getElementById('log_modal_student_name');
+  const metaEl = document.getElementById('log_modal_student_meta');
+  const container = document.getElementById('studentLogsTimelineContainer');
+  if (!modal || !container) return;
+
+  const stu = STUDENTS_BY_ID[studentId];
+  if (stu) {
+    titleEl.textContent = stu.full_name + ' (LRN: ' + stu.student_lrn + ')';
+    metaEl.textContent = 'Grade & Section: ' + (stu.grade_section || 'N/A') + ' • Current Status: ' + (stu.status || 'Approved');
+  } else {
+    titleEl.textContent = 'Student Account #' + studentId;
+    metaEl.textContent = '';
+  }
+
+  const logs = STUDENT_LOGS_MAP[studentId] || [];
+  if (logs.length === 0) {
+    container.innerHTML = '<div style="text-align: center; padding: 1.5rem; color: var(--gray-500);">No status or approval logs recorded for this student account yet.</div>';
+  } else {
+    const initialLimit = logs.length === 2 ? 1 : 2;
+    const totalLogs = logs.length;
+    const hiddenCount = Math.max(0, totalLogs - initialLimit);
+
+    let html = '<div class="log-stepper-container"><div class="log-stepper" data-initial-limit="' + initialLimit + '">';
+    logs.forEach((log, index) => {
+      const actLower = String(log.action_type || '').toLowerCase();
+      let stepClass = 'step-info';
+      let badgeClass = 'badge-in-progress';
+      let iconClass = 'fa-arrows-rotate';
+
+      if (actLower.indexOf('approv') !== -1) {
+        stepClass = 'step-success';
+        badgeClass = 'badge-accomplished';
+        iconClass = 'fa-check';
+      } else if (actLower.indexOf('reject') !== -1 || actLower.indexOf('revok') !== -1) {
+        stepClass = 'step-danger';
+        badgeClass = 'badge-overdue';
+        iconClass = 'fa-ban';
+      } else if (actLower.indexOf('regist') !== -1 || actLower.indexOf('creat') !== -1) {
+        stepClass = 'step-info';
+        badgeClass = 'badge-todo';
+        iconClass = 'fa-user-plus';
+      }
+
+      const hiddenClass = index >= initialLimit ? 'log-step-hidden' : '';
+      const lastVisibleClass = (index === initialLimit - 1 && totalLogs > initialLimit) ? 'log-step-last-visible' : '';
+
+      const transitionHtml = log.previous_status
+        ? '<span style="font-size: 0.73rem; color: var(--gray-600); margin-left: 0.25rem;">[' + escapeStudentLogHtml(log.previous_status) + ' &rarr; ' + escapeStudentLogHtml(log.new_status) + ']</span>'
+        : '<span style="font-size: 0.73rem; color: var(--gray-600); margin-left: 0.25rem;">[' + escapeStudentLogHtml(log.new_status) + ']</span>';
+
+      html += `
+        <div class="log-step ${stepClass} ${hiddenClass} ${lastVisibleClass}">
+          <div class="log-step-node">
+            <i class="fa-solid ${iconClass}"></i>
+          </div>
+          <div class="log-step-content">
+            <div class="log-step-header">
+              <div class="log-step-title">
+                <span class="badge ${badgeClass}" style="font-size: 0.7rem;">${escapeStudentLogHtml(log.action_type)}</span>
+                ${transitionHtml}
+                <span>${escapeStudentLogHtml(log.user_name)}</span>
+                <span class="log-step-role">(${escapeStudentLogHtml(log.user_role)})</span>
+              </div>
+              <div class="log-step-time">
+                <i class="fa-regular fa-clock"></i> ${escapeStudentLogHtml(log.formatted_time || log.created_at)}
+              </div>
+            </div>
+            <div class="log-step-body">${escapeStudentLogHtml(log.log_details)}</div>
+          </div>
+        </div>
+      `;
+    });
+    html += '</div>';
+    if (hiddenCount > 0) {
+      html += `
+        <div class="log-stepper-toggle-wrap">
+          <button type="button" class="log-stepper-toggle-btn" data-expanded="false" onclick="toggleStudentStepperLogs(this)">
+            <i class="fa-solid fa-chevron-down"></i> Show More (${hiddenCount} more ${hiddenCount === 1 ? 'log' : 'logs'})
+          </button>
+        </div>
+      `;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  modal.classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
 
 // Sync active tab on initial load if hash is set
 document.addEventListener('DOMContentLoaded', function() {

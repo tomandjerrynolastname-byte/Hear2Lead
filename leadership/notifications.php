@@ -118,6 +118,9 @@ if ($is_admin) {
         UNION ALL
         SELECT al.id, 'Accomplishment' as module_name, a.title as item_title, a.badge_tag as item_status, a.date_accomplished as item_date, al.user_name, al.user_role, al.action_type, al.log_details, al.created_at, a.org_id, o.acronym as org_acronym
         FROM accomplishment_logs al JOIN accomplishments a ON al.acc_id = a.id LEFT JOIN organizations o ON a.org_id = o.id
+        UNION ALL
+        SELECT sl.id, 'Student Account' as module_name, CONCAT(sl.student_name, ' (', sl.student_lrn, ')') as item_title, sl.new_status as item_status, DATE(sl.created_at) as item_date, sl.user_name, sl.user_role, sl.action_type, sl.log_details, sl.created_at, 0 as org_id, 'STUDENT' as org_acronym
+        FROM student_logs sl
     ) combined_logs
     WHERE $tl_where
     ORDER BY created_at DESC, id DESC

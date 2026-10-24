@@ -18,7 +18,7 @@ $filter_date = trim($_GET['filter_date'] ?? '');
 $date_from = trim($_GET['date_from'] ?? '');
 $date_to = trim($_GET['date_to'] ?? '');
 $active_log_tab = $_GET['log_tab'] ?? 'task_logs';
-if (!in_array($active_log_tab, ['task_logs', 'project_logs', 'acc_logs'], true)) {
+if (!in_array($active_log_tab, ['task_logs', 'project_logs', 'acc_logs', 'student_logs'], true)) {
     $active_log_tab = 'task_logs';
 }
 
@@ -330,6 +330,26 @@ $stmt_al = $pdo->prepare("SELECT al.*, a.title as acc_title, a.badge_tag, a.date
 $stmt_al->execute($al_params);
 $report_acc_logs = $stmt_al->fetchAll();
 
+// 4d. Student Account Status Logs
+$sl_conds = ["1=1"];
+$sl_params = [];
+if (!empty($filter_date)) {
+    $sl_conds[] = "DATE(sl.created_at) = ?";
+    $sl_params[] = $filter_date;
+}
+if (!empty($date_from)) {
+    $sl_conds[] = "DATE(sl.created_at) >= ?";
+    $sl_params[] = $date_from;
+}
+if (!empty($date_to)) {
+    $sl_conds[] = "DATE(sl.created_at) <= ?";
+    $sl_params[] = $date_to;
+}
+$sl_where = implode(" AND ", $sl_conds);
+$stmt_sl = $pdo->prepare("SELECT sl.* FROM student_logs sl WHERE $sl_where ORDER BY sl.created_at DESC, sl.id DESC");
+$stmt_sl->execute($sl_params);
+$report_student_logs = $stmt_sl->fetchAll();
+
 // Format human-readable period label
 $period_label = 'All Time';
 if (!empty($filter_date)) {
@@ -377,7 +397,7 @@ include_once __DIR__ . '/../includes/header.php';
   </div>
 
   <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
-    <button onclick="window.print()" class="btn btn-secondary no-print">
+    <button type="button" onclick="openOfficialReportTemplate(true)" class="btn btn-primary no-print">
       <i class="fa-solid fa-print"></i> Print Official Report
     </button>
   </div>
@@ -602,9 +622,9 @@ include_once __DIR__ . '/../includes/header.php';
 <!-- Section 3: Activity & Audit Logs Tab Panel (Tasks, Projects, Accomplishments) -->
 <div class="panel">
   <div class="panel-header" style="border-bottom: none; padding-bottom: 0.25rem; margin-bottom: 0.75rem;">
-    <span><i class="fa-solid fa-clock-rotate-left" style="color: var(--primary);"></i> Activity & Audit Logs (Tasks, Projects & Accomplishments)</span>
+    <span><i class="fa-solid fa-clock-rotate-left" style="color: var(--primary);"></i> Activity & Audit Logs (Tasks, Projects, Accomplishments & Student Status)</span>
     <span style="font-size: 0.85rem; color: var(--gray-500);">
-      <?= count($report_task_logs) + count($report_project_logs) + count($report_acc_logs) ?> Total Logged Actions
+      <?= count($report_task_logs) + count($report_project_logs) + count($report_acc_logs) + count($report_student_logs) ?> Total Logged Actions
     </span>
   </div>
 
@@ -624,6 +644,11 @@ include_once __DIR__ . '/../includes/header.php';
       <i class="fa-solid fa-trophy"></i>
       <span>Accomplishment Logs</span>
       <span class="user-tab-badge"><?= count($report_acc_logs) ?></span>
+    </button>
+    <button type="button" class="user-tab-btn <?= $active_log_tab === 'student_logs' ? 'active' : '' ?>" onclick="switchReportLogTab('student_logs')">
+      <i class="fa-solid fa-graduation-cap"></i>
+      <span>Student Status Logs</span>
+      <span class="user-tab-badge"><?= count($report_student_logs) ?></span>
     </button>
   </div>
 
@@ -770,6 +795,62 @@ include_once __DIR__ . '/../includes/header.php';
       </div>
     <?php endif; ?>
   </div>
+
+  <!-- TAB 4: Student Account Status Logs -->
+  <div class="user-tab-pane <?= $active_log_tab === 'student_logs' ? 'active' : '' ?>" id="report-tab-student_logs">
+    <?php if (empty($report_student_logs)): ?>
+      <div style="text-align: center; padding: 2.25rem; color: var(--gray-500);">
+        <i class="fa-solid fa-graduation-cap" style="font-size: 2rem; color: var(--gray-400); margin-bottom: 0.5rem; display: block;"></i>
+        No student account status logs found for the selected filter period.
+      </div>
+    <?php else: ?>
+      <div class="table-container" style="box-shadow: none; border: none; margin: 0;">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Student Account</th>
+              <th>Action</th>
+              <th>Status Transition</th>
+              <th>Logged By</th>
+              <th>Activity & Change Details</th>
+              <th>Timestamp</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($report_student_logs as $slog):
+              $act_lower = strtolower($slog['action_type'] ?? '');
+              $slog_badge = (strpos($act_lower, 'approv') !== false) ? 'badge-accomplished' : ((strpos($act_lower, 'reject') !== false || strpos($act_lower, 'revok') !== false || strpos($act_lower, 'delet') !== false) ? 'badge-overdue' : 'badge-todo');
+            ?>
+              <tr>
+                <td>
+                  <strong style="color: var(--dark); display: block;"><?= htmlspecialchars($slog['student_name']) ?></strong>
+                  <code style="font-size: 0.78rem;"><?= htmlspecialchars($slog['student_lrn']) ?></code>
+                </td>
+                <td><span class="badge <?= $slog_badge ?>"><?= htmlspecialchars($slog['action_type']) ?></span></td>
+                <td style="white-space: nowrap; font-size: 0.82rem;">
+                  <?php if (!empty($slog['previous_status'])): ?>
+                    <span class="badge badge-planning" style="font-size: 0.72rem;"><?= htmlspecialchars($slog['previous_status']) ?></span>
+                    <i class="fa-solid fa-arrow-right" style="font-size: 0.7rem; color: var(--gray-400); margin: 0 0.25rem;"></i>
+                  <?php endif; ?>
+                  <span class="badge <?= $slog['new_status'] === 'Approved' ? 'badge-accomplished' : ($slog['new_status'] === 'Pending' ? 'badge-todo' : 'badge-overdue') ?>" style="font-size: 0.72rem;">
+                    <?= htmlspecialchars($slog['new_status']) ?>
+                  </span>
+                </td>
+                <td>
+                  <div style="font-weight: 700; color: var(--dark); font-size: 0.88rem;"><?= htmlspecialchars($slog['user_name']) ?></div>
+                  <div style="font-size: 0.75rem; color: var(--gray-500);"><?= htmlspecialchars($slog['user_role']) ?></div>
+                </td>
+                <td style="font-size: 0.86rem; color: var(--gray-800); max-width: 420px;"><?= htmlspecialchars($slog['log_details']) ?></td>
+                <td style="white-space: nowrap; font-size: 0.8rem; color: var(--gray-600);">
+                  <i class="fa-regular fa-clock"></i> <?= date('M d, Y • g:i:s A', strtotime($slog['created_at'])) ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    <?php endif; ?>
+  </div>
 </div>
 
 <!-- Sign-off Block for Print / Official Submission -->
@@ -802,6 +883,25 @@ const SELECTED_REPORT_DATE = <?= json_encode($filter_date) ?>;
 let currentReportCalDate = SELECTED_REPORT_DATE ? new Date(SELECTED_REPORT_DATE + 'T00:00:00') : new Date();
 if (isNaN(currentReportCalDate.getTime())) currentReportCalDate = new Date();
 
+function openOfficialReportTemplate(autoPrint) {
+  const form = document.getElementById('reportsFilterForm');
+  const params = new URLSearchParams();
+  if (form) {
+    const orgEl = form.querySelector('[name="org_id"]');
+    const dateEl = form.querySelector('[name="filter_date"]');
+    const fromEl = form.querySelector('[name="date_from"]');
+    const toEl = form.querySelector('[name="date_to"]');
+    const logTabEl = document.getElementById('reportLogTabInput');
+    if (orgEl && orgEl.value !== '') params.set('org_id', orgEl.value);
+    if (dateEl && dateEl.value !== '') params.set('filter_date', dateEl.value);
+    if (fromEl && fromEl.value !== '') params.set('date_from', fromEl.value);
+    if (toEl && toEl.value !== '') params.set('date_to', toEl.value);
+    if (logTabEl && logTabEl.value !== '') params.set('log_tab', logTabEl.value);
+  }
+  if (autoPrint) params.set('auto_print', '1');
+  window.location.href = 'print_report.php?' + params.toString();
+}
+
 function switchReportLogTab(tabName) {
   const btns = document.querySelectorAll('.user-tabs-nav .user-tab-btn');
   const panes = document.querySelectorAll('.user-tab-pane');
@@ -818,6 +918,10 @@ function switchReportLogTab(tabName) {
   } else if (tabName === 'acc_logs') {
     if (btns[2]) btns[2].classList.add('active');
     const p = document.getElementById('report-tab-acc_logs');
+    if (p) p.classList.add('active');
+  } else if (tabName === 'student_logs') {
+    if (btns[3]) btns[3].classList.add('active');
+    const p = document.getElementById('report-tab-student_logs');
     if (p) p.classList.add('active');
   } else {
     if (btns[0]) btns[0].classList.add('active');

@@ -64,6 +64,44 @@ function getDBConnection() {
             }
 
             // Purge any legacy anonymous feedback submissions
+            $studentStatusColCheck = $pdo->query("SHOW COLUMNS FROM `students` LIKE 'status'")->rowCount();
+            if ($studentStatusColCheck === 0) {
+                $pdo->exec("ALTER TABLE `students`
+                    ADD COLUMN `status` ENUM('Pending', 'Approved', 'Rejected') NOT NULL DEFAULT 'Pending' AFTER `password`,
+                    ADD COLUMN `approved_by` INT DEFAULT NULL AFTER `status`,
+                    ADD COLUMN `approved_at` DATETIME DEFAULT NULL AFTER `approved_by`");
+                // Existing student accounts are approved by default
+                $pdo->exec("UPDATE `students` SET `status` = 'Approved', `approved_at` = NOW() WHERE `status` = 'Pending'");
+            }
+            // Ensure student_logs table exists for student account status/approval audit logs
+            $pdo->exec("CREATE TABLE IF NOT EXISTS `student_logs` (
+                `id` INT AUTO_INCREMENT PRIMARY KEY,
+                `student_id` INT DEFAULT NULL,
+                `student_lrn` VARCHAR(50) NOT NULL,
+                `student_name` VARCHAR(100) NOT NULL,
+                `user_id` INT DEFAULT NULL,
+                `user_name` VARCHAR(100) NOT NULL,
+                `user_role` VARCHAR(50) NOT NULL,
+                `action_type` VARCHAR(50) NOT NULL,
+                `previous_status` VARCHAR(30) DEFAULT NULL,
+                `new_status` VARCHAR(30) NOT NULL,
+                `log_details` TEXT NOT NULL,
+                `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (`student_id`) REFERENCES `students`(`id`) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            // Seed initial log for any existing student accounts without logs
+            $pdo->exec("INSERT INTO `student_logs` (`student_id`, `student_lrn`, `student_name`, `user_id`, `user_name`, `user_role`, `action_type`, `previous_status`, `new_status`, `log_details`, `created_at`)
+                SELECT s.id, s.student_lrn, s.full_name, s.approved_by, 'System Administrator', 'Admin',
+                       CASE WHEN s.status = 'Approved' THEN 'Approved' WHEN s.status = 'Rejected' THEN 'Rejected' ELSE 'Registered (Pending)' END,
+                       CASE WHEN s.status = 'Approved' THEN 'Pending' ELSE NULL END,
+                       s.status,
+                       CONCAT('Student account (LRN: ', s.student_lrn, ', ', s.grade_section, ') status recorded as ''', s.status, '''.'),
+                       IFNULL(s.approved_at, s.created_at)
+                FROM `students` s
+                LEFT JOIN `student_logs` sl ON sl.student_id = s.id
+                WHERE sl.id IS NULL");
+
             $pdo->exec("DELETE FROM feedbacks WHERE student_name = 'Anonymous Student' OR student_name IS NULL OR TRIM(student_name) = ''");
 
             // Ensure tasks.assigned_to is TEXT for multiple assignees
@@ -293,6 +331,21 @@ function recordLoginNotification(string $accountType, int $accountId, ?int $orgI
 /**
  * Fetch all roles from the Dynamic Role Library ordered by hierarchy
  */
+/**
+ * Record a student account registration, approval, rejection, or status change in student_logs
+ */
+function recordStudentAccountLog(?int $studentId, string $studentLrn, string $studentName, ?int $userId, string $userName, string $userRole, string $actionType, ?string $previousStatus, string $newStatus, string $logDetails, ?PDO $pdo = null): void {
+    if ($pdo === null) {
+        $pdo = getDBConnection();
+    }
+    try {
+        $stmt = $pdo->prepare("INSERT INTO `student_logs` (`student_id`, `student_lrn`, `student_name`, `user_id`, `user_name`, `user_role`, `action_type`, `previous_status`, `new_status`, `log_details`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute([$studentId, $studentLrn, $studentName, $userId, $userName, $userRole, $actionType, $previousStatus, $newStatus, $logDetails]);
+    } catch (PDOException $e) {
+        // Fail silently if table is not ready
+    }
+}
+
 function getAllUserRoles(?PDO $pdo = null): array {
     if ($pdo === null) {
         $pdo = getDBConnection();

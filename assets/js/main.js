@@ -559,3 +559,125 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
+
+// ==========================================================================
+// Universal Table Pagination (5 Rows Per Page)
+// ==========================================================================
+window.initTablePagination = function(defaultPageSize = 5) {
+  const tables = document.querySelectorAll('table.table');
+  tables.forEach((table) => {
+    if (table.dataset.noPagination === 'true') return;
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+
+    const allRows = Array.from(tbody.querySelectorAll(':scope > tr'));
+    // Exclude "empty state" rows that span across all columns
+    const dataRows = allRows.filter((row) => {
+      const cells = row.querySelectorAll(':scope > td');
+      if (cells.length === 1 && cells[0].hasAttribute('colspan')) {
+        return false;
+      }
+      return true;
+    });
+
+    const container = table.closest('.table-container') || table.parentElement;
+    if (!container) return;
+
+    // Remove existing pagination bar if re-initializing
+    const existingBar = container.querySelector(':scope > .table-pagination-bar');
+    if (existingBar) {
+      existingBar.remove();
+    }
+
+    if (dataRows.length === 0) {
+      return;
+    }
+
+    const pageSize = parseInt(table.getAttribute('data-page-size') || String(defaultPageSize), 10) || 5;
+    const totalRows = dataRows.length;
+    const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+    let currentPage = 1;
+
+    const paginationBar = document.createElement('div');
+    paginationBar.className = 'table-pagination-bar';
+    container.appendChild(paginationBar);
+
+    function getPageNumbers(current, total) {
+      if (total <= 7) {
+        return Array.from({ length: total }, (_, i) => i + 1);
+      }
+      const pages = [1];
+      if (current > 3) pages.push('...');
+      const start = Math.max(2, current - 1);
+      const end = Math.min(total - 1, current + 1);
+      for (let i = start; i <= end; i++) {
+        pages.push(i);
+      }
+      if (current < total - 2) pages.push('...');
+      pages.push(total);
+      return pages;
+    }
+
+    function renderPage(page) {
+      currentPage = Math.min(Math.max(1, page), totalPages);
+      const startIdx = (currentPage - 1) * pageSize;
+      const endIdx = Math.min(startIdx + pageSize, totalRows);
+
+      dataRows.forEach((row, idx) => {
+        if (idx >= startIdx && idx < endIdx) {
+          row.classList.remove('table-paginated-hidden');
+        } else {
+          row.classList.add('table-paginated-hidden');
+        }
+      });
+
+      const pageNums = getPageNumbers(currentPage, totalPages);
+      let buttonsHtml = `
+        <button type="button" class="table-page-btn" data-page="${currentPage - 1}" ${currentPage === 1 ? 'disabled' : ''}>
+          <i class="fa-solid fa-chevron-left" style="font-size: 0.68rem;"></i> Prev
+        </button>
+      `;
+
+      pageNums.forEach((p) => {
+        if (p === '...') {
+          buttonsHtml += `<span class="table-page-ellipsis">&hellip;</span>`;
+        } else {
+          const activeClass = p === currentPage ? 'active' : '';
+          buttonsHtml += `<button type="button" class="table-page-btn ${activeClass}" data-page="${p}">${p}</button>`;
+        }
+      });
+
+      buttonsHtml += `
+        <button type="button" class="table-page-btn" data-page="${currentPage + 1}" ${currentPage === totalPages ? 'disabled' : ''}>
+          Next <i class="fa-solid fa-chevron-right" style="font-size: 0.68rem;"></i>
+        </button>
+      `;
+
+      paginationBar.innerHTML = `
+        <div class="table-pagination-info">
+          Showing <strong>${startIdx + 1}</strong> to <strong>${endIdx}</strong> of <strong>${totalRows}</strong> ${totalRows === 1 ? 'entry' : 'entries'}
+          <span style="color: var(--gray-400); margin-left: 0.25rem;">(${pageSize} per page)</span>
+        </div>
+        <div class="table-pagination-controls">
+          ${buttonsHtml}
+        </div>
+      `;
+
+      paginationBar.querySelectorAll('.table-page-btn:not(:disabled)').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const targetPage = parseInt(btn.getAttribute('data-page') || '1', 10);
+          if (targetPage && targetPage !== currentPage) {
+            renderPage(targetPage);
+          }
+        });
+      });
+    }
+
+    renderPage(1);
+  });
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  window.initTablePagination(5);
+});

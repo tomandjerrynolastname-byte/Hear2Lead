@@ -225,6 +225,9 @@ if (isset($_SESSION['user_id'])) {
       <button type="button" onclick="openAuthModal('student')" class="btn btn-primary" style="width: 100%; font-size: 1rem; padding: 0.8rem 1.5rem; cursor: pointer; border: none;">
         Student Login <i class="fa-solid fa-right-to-bracket"></i>
       </button>
+      <button type="button" onclick="openAuthModal('register')" class="btn btn-secondary" style="width: 100%; font-size: 0.88rem; padding: 0.6rem 1.25rem; cursor: pointer; border: 1.5px solid var(--primary); color: var(--primary); background: rgba(100, 25, 20, 0.04); font-weight: 700; margin-top: 0.6rem;">
+        <i class="fa-solid fa-user-plus"></i> Register Student Account
+      </button>
     </div>
 
     <!-- Leadership Portal Card -->

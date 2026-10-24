@@ -179,15 +179,37 @@ CREATE TABLE IF NOT EXISTS `students` (
   `grade_section` VARCHAR(50) NOT NULL,
   `email` VARCHAR(100) DEFAULT NULL,
   `password` VARCHAR(255) NOT NULL,
+  `status` ENUM('Pending', 'Approved', 'Rejected') NOT NULL DEFAULT 'Pending',
+  `approved_by` INT DEFAULT NULL,
+  `approved_at` DATETIME DEFAULT NULL,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Sample Student Accounts (Password: 'student123')
-INSERT INTO `students` (`id`, `student_lrn`, `full_name`, `grade_section`, `email`, `password`) VALUES
-(1, '2026-0001', 'Alex Morgan', 'Grade 11 - STEM', 'alex.morgan@student.edu.ph', '$2y$10$8Q6/91M1b.Z5l6M7N8O9P.qR1S2T3U4V5W6X7Y8Z9A0B1C2D3E4F5'),
-(2, '2026-0002', 'Samantha Cruz', 'Grade 10 - Rizal', 'samantha.cruz@student.edu.ph', '$2y$10$8Q6/91M1b.Z5l6M7N8O9P.qR1S2T3U4V5W6X7Y8Z9A0B1C2D3E4F5');
+INSERT INTO `students` (`id`, `student_lrn`, `full_name`, `grade_section`, `email`, `password`, `status`, `approved_at`) VALUES
+(1, '2026-0001', 'Alex Morgan', 'Grade 11 - STEM', 'alex.morgan@student.edu.ph', '$2y$10$8Q6/91M1b.Z5l6M7N8O9P.qR1S2T3U4V5W6X7Y8Z9A0B1C2D3E4F5', 'Approved', NOW()),
+(2, '2026-0002', 'Samantha Cruz', 'Grade 10 - Rizal', 'samantha.cruz@student.edu.ph', '$2y$10$8Q6/91M1b.Z5l6M7N8O9P.qR1S2T3U4V5W6X7Y8Z9A0B1C2D3E4F5', 'Approved', NOW());
 
 -- --------------------------------------------------------
+-- --------------------------------------------------------
+-- Table: student_logs (Student Account Registration, Approval & Status History)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `student_logs` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `student_id` INT DEFAULT NULL,
+  `student_lrn` VARCHAR(50) NOT NULL,
+  `student_name` VARCHAR(100) NOT NULL,
+  `user_id` INT DEFAULT NULL,
+  `user_name` VARCHAR(100) NOT NULL,
+  `user_role` VARCHAR(50) NOT NULL,
+  `action_type` VARCHAR(50) NOT NULL,
+  `previous_status` VARCHAR(30) DEFAULT NULL,
+  `new_status` VARCHAR(30) NOT NULL,
+  `log_details` TEXT NOT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`student_id`) REFERENCES `students`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Table: feedbacks (Suggestions & Feedbacks from Students - Verified)
 -- --------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `feedbacks` (

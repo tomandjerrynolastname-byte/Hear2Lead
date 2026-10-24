@@ -1,5 +1,5 @@
 <?php
-// student/login.php - Student Authentication Handler (Modal POST & Redirect Guard)
+// student/login.php - Student Authentication Handler (Modal POST & Redirect Guard with Admin Approval Check)
 require_once __DIR__ . '/../config/db.php';
 
 // If already logged in, redirect directly to portal (index is not accessible)
@@ -32,28 +32,38 @@ $error = '';
 if (empty($identifier) || empty($password)) {
     $error = "Please enter both your Student LRN/ID and password.";
 } else {
-    $stmt = $pdo->prepare("SELECT * FROM students WHERE student_lrn = ? OR email = ?");
+    $stmt = $pdo->prepare("SELECT * FROM students WHERE LOWER(TRIM(student_lrn)) = LOWER(?) OR LOWER(TRIM(email)) = LOWER(?) LIMIT 1");
     $stmt->execute([$identifier, $identifier]);
     $student = $stmt->fetch();
 
     if ($student && (password_verify($password, $student['password']) || $password === 'student123')) {
-        // Login Success -> Set Student Session
-        $_SESSION['student_id'] = $student['id'];
-        $_SESSION['student_lrn'] = $student['student_lrn'];
-        $_SESSION['student_name'] = $student['full_name'];
-        $_SESSION['student_grade_section'] = $student['grade_section'];
-        $_SESSION['student_email'] = $student['email'];
-        $_SESSION['login_logged'] = true;
+        $account_status = $student['status'] ?? 'Approved';
 
-        if (function_exists('recordLoginNotification')) {
-            $role_lbl = !empty($student['grade_section']) ? "Student • {$student['grade_section']}" : 'Student';
-            $login_msg = "{$student['full_name']} (LRN: {$student['student_lrn']}) logged in to the Student Portal.";
-            recordLoginNotification('Student', intval($student['id']), null, 'STUDENT', $student['full_name'], $role_lbl, $login_msg, $pdo);
+        // Check if account has been approved by an administrator
+        if ($account_status === 'Pending') {
+            $error = "Your account (LRN: {$student['student_lrn']}) is currently pending administrator approval. Please wait for an administrator to review and activate your account before logging in.";
+        } elseif ($account_status === 'Rejected') {
+            $error = "Your student account registration was rejected by the administrator. Please contact your school administrator or organization leader for assistance.";
+        } else {
+            // Login Success -> Set Student Session
+            $_SESSION['student_id'] = $student['id'];
+            $_SESSION['student_lrn'] = $student['student_lrn'];
+            $_SESSION['student_name'] = $student['full_name'];
+            $_SESSION['student_grade_section'] = $student['grade_section'];
+            $_SESSION['student_email'] = $student['email'];
+            $_SESSION['student_status'] = $student['status'];
+            $_SESSION['login_logged'] = true;
+
+            if (function_exists('recordLoginNotification')) {
+                $role_lbl = !empty($student['grade_section']) ? "Student • {$student['grade_section']}" : 'Student';
+                $login_msg = "{$student['full_name']} (LRN: {$student['student_lrn']}) logged in to the Student Portal.";
+                recordLoginNotification('Student', intval($student['id']), null, 'STUDENT', $student['full_name'], $role_lbl, $login_msg, $pdo);
+            }
+
+            // Redirect directly into the student portal
+            header("Location: index.php");
+            exit;
         }
-
-        // Redirect directly into the student portal
-        header("Location: index.php");
-        exit;
     } else {
         $error = "Invalid Student ID/LRN or password. Please try again.";
     }
