@@ -522,6 +522,10 @@ function isUserAssignedToTask(?string $assignedTo, string $userName, string $use
         if ($nameOnly !== '' && strcasecmp($nameOnly, $userName) === 0) {
             return true;
         }
+        // Match role-only assignment (e.g. "Secretary") if role is specified
+        if ($userRole !== '' && strcasecmp($part, $userRole) === 0) {
+            return true;
+        }
     }
 
     return false;
@@ -696,6 +700,141 @@ function getTaskDeadlineReminders(?PDO $pdo, bool $isAdmin, int $orgId, string $
     }
 
     return $reminders;
+}
+
+/**
+ * Compute per-personnel task assignment and status breakdown (splitting multi-assignee tasks per individual officer)
+ */
+function getIndividualPersonnelTaskStats(?PDO $pdo, array $taskRows): array {
+    if ($pdo === null) {
+        $pdo = getDBConnection();
+    }
+
+    $officersByOrg = [];
+    $canonicalByOrgAndKey = [];
+    try {
+        $stmt = $pdo->query("SELECT u.id, u.org_id, u.full_name, u.role, o.acronym as org_acronym
+                             FROM `users` u
+                             LEFT JOIN `organizations` o ON u.org_id = o.id
+                             WHERE u.role != 'Admin'
+                             ORDER BY u.full_name ASC");
+        foreach ($stmt->fetchAll() as $u) {
+            $oid = intval($u['org_id']);
+            $label = trim($u['full_name']) . ' (' . trim($u['role']) . ')';
+            $info = [
+                'label' => $label,
+                'full_name' => trim($u['full_name']),
+                'role' => trim($u['role']),
+                'org_acronym' => $u['org_acronym'] ?? ''
+            ];
+            $officersByOrg[$oid][] = $info;
+            $canonicalByOrgAndKey[$oid][strtolower($label)] = $info;
+            $canonicalByOrgAndKey[$oid][strtolower(trim($u['full_name']))] = $info;
+        }
+    } catch (PDOException $e) {
+        // Continue with raw assignee strings if users query fails
+    }
+
+    $statsMap = [];
+
+    foreach ($taskRows as $t) {
+        $oid = intval($t['org_id'] ?? 0);
+        $taskOrgAcronym = $t['org_acronym'] ?? '';
+        $status = $t['status'] ?? 'To Do';
+        $rawAssigned = trim($t['assigned_to'] ?? '');
+
+        $resolvedPersonnel = [];
+        if ($rawAssigned === '') {
+            $resolvedPersonnel['unassigned|' . $oid] = [
+                'assigned_to' => 'Unassigned',
+                'role' => '',
+                'org_acronym' => $taskOrgAcronym
+            ];
+        } else {
+            $parts = array_values(array_filter(array_map('trim', explode(',', $rawAssigned))));
+            foreach ($parts as $part) {
+                if (strcasecmp($part, 'All Officers') === 0 && !empty($officersByOrg[$oid])) {
+                    foreach ($officersByOrg[$oid] as $off) {
+                        $key = strtolower($off['label']) . '|' . $oid;
+                        $resolvedPersonnel[$key] = [
+                            'assigned_to' => $off['label'],
+                            'role' => $off['role'],
+                            'org_acronym' => $off['org_acronym'] ?: $taskOrgAcronym
+                        ];
+                    }
+                } else {
+                    $lookupKey = strtolower($part);
+                    $nameOnlyKey = strtolower(trim(preg_replace('/\s*\([^)]*\)\s*$/', '', $part)));
+                    if (isset($canonicalByOrgAndKey[$oid][$lookupKey])) {
+                        $off = $canonicalByOrgAndKey[$oid][$lookupKey];
+                        $key = strtolower($off['label']) . '|' . $oid;
+                        $resolvedPersonnel[$key] = [
+                            'assigned_to' => $off['label'],
+                            'role' => $off['role'],
+                            'org_acronym' => $off['org_acronym'] ?: $taskOrgAcronym
+                        ];
+                    } elseif ($nameOnlyKey !== '' && isset($canonicalByOrgAndKey[$oid][$nameOnlyKey])) {
+                        $off = $canonicalByOrgAndKey[$oid][$nameOnlyKey];
+                        $key = strtolower($off['label']) . '|' . $oid;
+                        $resolvedPersonnel[$key] = [
+                            'assigned_to' => $off['label'],
+                            'role' => $off['role'],
+                            'org_acronym' => $off['org_acronym'] ?: $taskOrgAcronym
+                        ];
+                    } else {
+                        $roleMatch = '';
+                        if (preg_match('/\(([^)]+)\)\s*$/', $part, $m)) {
+                            $roleMatch = trim($m[1]);
+                        }
+                        $key = strtolower($part) . '|' . $oid;
+                        $resolvedPersonnel[$key] = [
+                            'assigned_to' => $part,
+                            'role' => $roleMatch,
+                            'org_acronym' => $taskOrgAcronym
+                        ];
+                    }
+                }
+            }
+        }
+
+        foreach ($resolvedPersonnel as $personKey => $personInfo) {
+            if (!isset($statsMap[$personKey])) {
+                $statsMap[$personKey] = [
+                    'assigned_to' => $personInfo['assigned_to'],
+                    'role' => $personInfo['role'],
+                    'org_acronym' => $personInfo['org_acronym'],
+                    'total_assigned' => 0,
+                    'count_accomplished' => 0,
+                    'count_in_progress' => 0,
+                    'count_overdue' => 0,
+                    'count_todo' => 0
+                ];
+            }
+            $statsMap[$personKey]['total_assigned']++;
+            if ($status === 'Accomplished') {
+                $statsMap[$personKey]['count_accomplished']++;
+            } elseif ($status === 'In Progress') {
+                $statsMap[$personKey]['count_in_progress']++;
+            } elseif ($status === 'Overdue') {
+                $statsMap[$personKey]['count_overdue']++;
+            } else {
+                $statsMap[$personKey]['count_todo']++;
+            }
+        }
+    }
+
+    $result = array_values($statsMap);
+    usort($result, function ($a, $b) {
+        if ($b['total_assigned'] !== $a['total_assigned']) {
+            return $b['total_assigned'] <=> $a['total_assigned'];
+        }
+        if ($b['count_accomplished'] !== $a['count_accomplished']) {
+            return $b['count_accomplished'] <=> $a['count_accomplished'];
+        }
+        return strcasecmp($a['assigned_to'], $b['assigned_to']);
+    });
+
+    return $result;
 }
 
 // Global PDO instance helper & automatic overdue task synchronization

@@ -353,15 +353,21 @@ include_once __DIR__ . '/../includes/header.php';
                 <form method="POST" action="notifications.php?tab=all" style="display: inline-flex; align-items: center; gap: 0.35rem;">
                   <input type="hidden" name="action" value="quick_task_status">
                   <input type="hidden" name="task_id" value="<?= $rem['item_id'] ?>">
-                  <input type="hidden" name="new_status" value="Accomplished">
-                  <button type="submit" class="btn btn-primary btn-sm" style="background: #059669; border-color: #059669;" title="Mark Task Accomplished">
-                    <i class="fa-solid fa-check"></i> Mark Accomplished
-                  </button>
+                  <select name="new_status" class="form-control" style="padding: 0.3rem 0.6rem; font-size: 0.78rem; height: auto; width: auto;" onchange="this.form.submit()" title="Update Task Status">
+                    <option value="To Do" <?= $rem['status'] === 'To Do' ? 'selected' : '' ?>>To Do</option>
+                    <option value="In Progress" <?= $rem['status'] === 'In Progress' ? 'selected' : '' ?>>In Progress (Ongoing)</option>
+                    <option value="Accomplished" <?= $rem['status'] === 'Accomplished' ? 'selected' : '' ?>>Accomplished</option>
+                    <option value="Overdue" <?= $rem['status'] === 'Overdue' ? 'selected' : '' ?>>Overdue</option>
+                  </select>
                 </form>
+                <a href="tasks.php?log_task=<?= $rem['item_id'] ?>" class="btn btn-secondary btn-sm">
+                  <i class="fa-solid fa-clock-rotate-left"></i> Status & Logs
+                </a>
+              <?php else: ?>
+                <a href="<?= htmlspecialchars($rem['link']) ?>" class="btn btn-secondary btn-sm">
+                  <i class="fa-solid fa-arrow-up-right-from-square"></i> View <?= htmlspecialchars($rem['module']) ?>
+                </a>
               <?php endif; ?>
-              <a href="<?= htmlspecialchars($rem['link']) ?>" class="btn btn-secondary btn-sm">
-                <i class="fa-solid fa-arrow-up-right-from-square"></i> View <?= htmlspecialchars($rem['module']) ?>
-              </a>
             </div>
           </div>
         <?php endforeach; ?>
@@ -531,15 +537,21 @@ include_once __DIR__ . '/../includes/header.php';
                 <form method="POST" action="notifications.php?tab=reminders" style="display: inline-flex; align-items: center; gap: 0.35rem;">
                   <input type="hidden" name="action" value="quick_task_status">
                   <input type="hidden" name="task_id" value="<?= $rem['item_id'] ?>">
-                  <input type="hidden" name="new_status" value="Accomplished">
-                  <button type="submit" class="btn btn-primary btn-sm" style="background: #059669; border-color: #059669;">
-                    <i class="fa-solid fa-check"></i> Mark Accomplished
-                  </button>
+                  <select name="new_status" class="form-control" style="padding: 0.3rem 0.6rem; font-size: 0.78rem; height: auto; width: auto;" onchange="this.form.submit()" title="Update Task Status">
+                    <option value="To Do" <?= $rem['status'] === 'To Do' ? 'selected' : '' ?>>To Do</option>
+                    <option value="In Progress" <?= $rem['status'] === 'In Progress' ? 'selected' : '' ?>>In Progress (Ongoing)</option>
+                    <option value="Accomplished" <?= $rem['status'] === 'Accomplished' ? 'selected' : '' ?>>Accomplished</option>
+                    <option value="Overdue" <?= $rem['status'] === 'Overdue' ? 'selected' : '' ?>>Overdue</option>
+                  </select>
                 </form>
+                <a href="tasks.php?log_task=<?= $rem['item_id'] ?>" class="btn btn-secondary btn-sm">
+                  <i class="fa-solid fa-clock-rotate-left"></i> Status & Logs
+                </a>
+              <?php else: ?>
+                <a href="<?= htmlspecialchars($rem['link']) ?>" class="btn btn-secondary btn-sm">
+                  <i class="fa-solid fa-arrow-up-right-from-square"></i> Open <?= htmlspecialchars($rem['module']) ?>
+                </a>
               <?php endif; ?>
-              <a href="<?= htmlspecialchars($rem['link']) ?>" class="btn btn-secondary btn-sm">
-                <i class="fa-solid fa-arrow-up-right-from-square"></i> Open <?= htmlspecialchars($rem['module']) ?>
-              </a>
             </div>
           </div>
         <?php endforeach; ?>

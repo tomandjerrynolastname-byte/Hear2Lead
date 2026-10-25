@@ -20,12 +20,50 @@ $error_msg = '';
 // Update overdue tasks automatically and record notification logs
 syncOverdueTasks($pdo);
 
-// 1. Handle Task Actions (Only Admin, President, Vice President, or Custom Roles with Task Management permission can add/edit/delete tasks)
+// 1. Handle Task Actions
+// - Admin, President, Vice President, or Custom Roles with Task Management permission can create/edit/delete tasks.
+// - Assigned Officers (e.g., Secretary, Treasurer, Officer assigned to a specific task) can update the status of their assigned task and add/update its activity logs.
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
+    $allowed_statuses = ['To Do', 'In Progress', 'Accomplished', 'Overdue'];
 
-    if (!$can_manage_tasks) {
-        $error_msg = "Permission denied. Your role ($current_role) does not have permission to add or modify tasks.";
+    if ($action === 'quick_status') {
+        $task_id = intval($_POST['task_id'] ?? 0);
+        $old_stmt = $pdo->prepare("SELECT * FROM tasks WHERE id = ?");
+        $old_stmt->execute([$task_id]);
+        $old_task = $old_stmt->fetch();
+
+        $is_assigned_officer = $old_task
+            && ($is_admin || intval($old_task['org_id']) === $current_org_id)
+            && isUserAssignedToTask($old_task['assigned_to'] ?? '', $current_user_name, $current_role);
+
+        $can_update_this_task = ($can_manage_tasks && ($is_admin || ($old_task && intval($old_task['org_id']) === $current_org_id)))
+            || $is_assigned_officer;
+
+        if (!$old_task) {
+            $error_msg = "Task not found.";
+        } elseif (!$can_update_this_task) {
+            $error_msg = "Permission denied. You can only update the status of tasks assigned to you.";
+        } else {
+            $new_status = $_POST['new_status'] ?? 'To Do';
+            if (!in_array($new_status, $allowed_statuses, true)) {
+                $new_status = 'To Do';
+            }
+
+            $stmt = $pdo->prepare("UPDATE tasks SET status = ? WHERE id = ?");
+            if ($stmt->execute([$new_status, $task_id])) {
+                $old_status_label = $old_task['status'] ?? 'Previous';
+                $log_details = "Task status changed from '$old_status_label' to '$new_status'.";
+                $log_stmt = $pdo->prepare("INSERT INTO task_logs (task_id, user_id, user_name, user_role, action_type, log_details) VALUES (?, ?, ?, ?, 'Status Updated', ?)");
+                $log_stmt->execute([$task_id, $current_user_id, $current_user_name, $current_role, $log_details]);
+
+                $success_msg = "Task status changed to '$new_status' and logged.";
+            } else {
+                $error_msg = "Failed to update task status.";
+            }
+        }
+    } elseif (!$can_manage_tasks) {
+        $error_msg = "Permission denied. Your role ($current_role) does not have permission to create or delete tasks.";
     } else {
         if ($action === 'create_task') {
             $title = trim($_POST['title'] ?? '');
@@ -142,30 +180,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        if ($action === 'quick_status') {
-            $task_id = intval($_POST['task_id'] ?? 0);
-            $new_status = $_POST['new_status'] ?? 'To Do';
-
-            $old_stmt = $pdo->prepare("SELECT status, title FROM tasks WHERE id = ?");
-            $old_stmt->execute([$task_id]);
-            $old_task = $old_stmt->fetch();
-
-            if ($is_admin) {
-                $stmt = $pdo->prepare("UPDATE tasks SET status = ? WHERE id = ?");
-                $stmt->execute([$new_status, $task_id]);
-            } else {
-                $stmt = $pdo->prepare("UPDATE tasks SET status = ? WHERE id = ? AND org_id = ?");
-                $stmt->execute([$new_status, $task_id, $current_org_id]);
-            }
-
-            $old_status_label = $old_task['status'] ?? 'Previous';
-            $log_details = "Task status changed from '$old_status_label' to '$new_status'.";
-            $log_stmt = $pdo->prepare("INSERT INTO task_logs (task_id, user_id, user_name, user_role, action_type, log_details) VALUES (?, ?, ?, ?, 'Status Updated', ?)");
-            $log_stmt->execute([$task_id, $current_user_id, $current_user_name, $current_role, $log_details]);
-
-            $success_msg = "Task status changed to '$new_status' and logged.";
-        }
-
         if ($action === 'delete_task') {
             $task_id = intval($_POST['task_id'] ?? 0);
             if ($is_admin) {
@@ -207,8 +221,9 @@ if ($filter_org > 0) {
 }
 if (!$can_manage_tasks) {
     // Other accounts can only view the tasks assigned to them
-    $where[] = "(t.assigned_to LIKE ? OR t.assigned_to = 'All Officers')";
+    $where[] = "(t.assigned_to LIKE ? OR t.assigned_to LIKE ? OR t.assigned_to = 'All Officers')";
     $params[] = '%' . $current_user_name . '%';
+    $params[] = '%(' . $current_role . ')%';
 }
 if (!empty($filter_status)) {
     $where[] = "t.status = ?";
@@ -230,6 +245,12 @@ $query = "SELECT t.*, p.title as project_title, o.acronym as org_acronym, o.name
 $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $tasks = $stmt->fetchAll();
+
+foreach ($tasks as &$t_row) {
+    $t_row['is_assigned'] = isUserAssignedToTask($t_row['assigned_to'] ?? '', $current_user_name, $current_role);
+    $t_row['can_update'] = $can_manage_tasks || $t_row['is_assigned'];
+}
+unset($t_row);
 
 $active_tab = (isset($_GET['tab']) && $_GET['tab'] === 'logs') ? 'logs' : 'tasks';
 
@@ -444,7 +465,7 @@ include_once __DIR__ . '/../includes/header.php';
       <?php elseif ($can_manage_tasks): ?>
         Organize, assign, and monitor internal tasks and officer deadlines for <strong><?= htmlspecialchars($_SESSION['org_acronym']) ?></strong>.
       <?php else: ?>
-        View tasks assigned to you under <strong><?= htmlspecialchars($_SESSION['org_acronym']) ?></strong>.
+        View tasks assigned to you under <strong><?= htmlspecialchars($_SESSION['org_acronym']) ?></strong>, update their status (To Do, In Progress / Ongoing, Accomplished), and manage activity logs.
       <?php endif; ?>
     </p>
   </div>
@@ -558,7 +579,7 @@ if ($is_admin && $filter_org === 0) $col_count++;
         <th>Priority</th>
         <th>Deadline</th>
         <th>Status</th>
-        <th><?= $can_manage_tasks ? 'Actions & Logs' : 'Activity Logs' ?></th>
+        <th><?= $can_manage_tasks ? 'Actions & Logs' : 'Status & Activity Logs' ?></th>
       </tr>
     </thead>
     <tbody>
@@ -576,6 +597,7 @@ if ($is_admin && $filter_org === 0) $col_count++;
           $task_badge = $task_status_badges[$task['status']] ?? 'badge-todo';
           $assignees_list = array_filter(array_map('trim', explode(',', $task['assigned_to'] ?? '')));
           $log_count = count($task_logs_by_task[intval($task['id'])] ?? []);
+          $can_update_row = !empty($task['can_update']);
         ?>
           <tr>
             <?php if ($is_admin && $filter_org === 0): ?>
@@ -612,12 +634,12 @@ if ($is_admin && $filter_org === 0) $col_count++;
               </span>
             </td>
             <td>
-              <?php if ($can_manage_tasks): ?>
-                <!-- Quick Status Selector Form -->
+              <?php if ($can_update_row): ?>
+                <!-- Quick Status Selector Form (accessible to task managers & assigned personnel) -->
                 <form method="POST" action="tasks.php" style="display: inline-block;">
                   <input type="hidden" name="action" value="quick_status">
                   <input type="hidden" name="task_id" value="<?= $task['id'] ?>">
-                  <select name="new_status" class="badge <?= $task_badge ?>" style="border: none; cursor: pointer; outline: none; appearance: none; padding: 0.25rem 0.5rem;" onchange="this.form.submit()">
+                  <select name="new_status" class="badge <?= $task_badge ?>" style="border: none; cursor: pointer; outline: none; appearance: none; padding: 0.25rem 0.5rem;" onchange="this.form.submit()" title="Click to update task status">
                     <option value="To Do" <?= $task['status'] == 'To Do' ? 'selected' : '' ?>>To Do</option>
                     <option value="In Progress" <?= $task['status'] == 'In Progress' ? 'selected' : '' ?>>In Progress</option>
                     <option value="Accomplished" <?= $task['status'] == 'Accomplished' ? 'selected' : '' ?>>Accomplished</option>
@@ -1231,6 +1253,9 @@ document.addEventListener('DOMContentLoaded', () => {
   } else if (urlParams.get('edit')) {
     const editId = parseInt(urlParams.get('edit'), 10);
     openEditTaskModal(editId);
+  } else if (urlParams.get('log_task')) {
+    const logTaskId = parseInt(urlParams.get('log_task'), 10);
+    openTaskLogsModal(logTaskId, true);
   }
 });
 </script>

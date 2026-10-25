@@ -198,23 +198,7 @@ $accomplishments_list = $stmt->fetchAll();
 $total_accomplishments = count($accomplishments_list);
 
 // ----------------------------------------------------
-// 2. Individual Task Assignment & Monitoring Breakdown (Filtered)
-// ----------------------------------------------------
-$officer_stats_sql = "SELECT t.assigned_to,
-    COUNT(*) as total_assigned,
-    SUM(CASE WHEN t.status = 'Accomplished' THEN 1 ELSE 0 END) as count_accomplished,
-    SUM(CASE WHEN t.status = 'In Progress' THEN 1 ELSE 0 END) as count_in_progress,
-    SUM(CASE WHEN t.status = 'Overdue' THEN 1 ELSE 0 END) as count_overdue,
-    SUM(CASE WHEN t.status = 'To Do' THEN 1 ELSE 0 END) as count_todo
-    FROM tasks t WHERE $task_where_sql
-    GROUP BY t.assigned_to
-    ORDER BY total_assigned DESC";
-$stmt = $pdo->prepare($officer_stats_sql);
-$stmt->execute($task_params);
-$officer_performance = $stmt->fetchAll();
-
-// ----------------------------------------------------
-// 3. Detailed Tasks List (Filtered)
+// 2. Detailed Tasks List & Individual Task Assignment Breakdown (Filtered)
 // ----------------------------------------------------
 $tasks_list_sql = "SELECT t.*, o.acronym as org_acronym, p.title as project_title
                    FROM tasks t
@@ -225,6 +209,7 @@ $tasks_list_sql = "SELECT t.*, o.acronym as org_acronym, p.title as project_titl
 $stmt = $pdo->prepare($tasks_list_sql);
 $stmt->execute($task_params);
 $tasks_list = $stmt->fetchAll();
+$officer_performance = getIndividualPersonnelTaskStats($pdo, $tasks_list);
 
 // ----------------------------------------------------
 // 4. Projects Overview Table (Filtered)
@@ -1090,14 +1075,17 @@ $back_query = http_build_query([
     <div class="report-section" id="sec-officers">
       <div class="section-title-bar">
         <h3>II. Individual Officer Task Assignment &amp; Accountability Breakdown</h3>
-        <span class="section-count"><?= count($officer_performance) ?> Assigned Officer / Team Group(s)</span>
+        <span class="section-count"><?= count($officer_performance) ?> Assigned Personnel</span>
       </div>
 
       <table class="official-table">
         <thead>
           <tr>
             <th style="width: 34px; text-align: center;">#</th>
-            <th>Assigned Officer / Committee / Team</th>
+            <?php if ($selected_org_id === 0): ?>
+              <th>Org</th>
+            <?php endif; ?>
+            <th>Assigned Personnel</th>
             <th style="text-align: center;">Total Assigned</th>
             <th style="text-align: center;">Accomplished</th>
             <th style="text-align: center;">In Progress</th>
@@ -1109,7 +1097,7 @@ $back_query = http_build_query([
         <tbody>
           <?php if (empty($officer_performance)): ?>
             <tr>
-              <td colspan="8" style="text-align: center; color: var(--gray-500); padding: 1rem;">
+              <td colspan="<?= $selected_org_id === 0 ? '9' : '8' ?>" style="text-align: center; color: var(--gray-500); padding: 1rem;">
                 No task assignments found matching the selected filter criteria (<?= htmlspecialchars($period_label) ?>).
               </td>
             </tr>
@@ -1120,6 +1108,9 @@ $back_query = http_build_query([
             ?>
               <tr>
                 <td style="text-align: center; font-weight: 700; color: var(--gray-500);"><?= $idx + 1 ?></td>
+                <?php if ($selected_org_id === 0): ?>
+                  <td><strong><?= htmlspecialchars($row['org_acronym'] ?: 'ORG') ?></strong></td>
+                <?php endif; ?>
                 <td><strong><?= htmlspecialchars($row['assigned_to'] ?: 'Unassigned') ?></strong></td>
                 <td style="text-align: center;"><strong><?= intval($row['total_assigned']) ?></strong></td>
                 <td style="text-align: center; color: var(--success); font-weight: 700;"><?= intval($row['count_accomplished']) ?></td>

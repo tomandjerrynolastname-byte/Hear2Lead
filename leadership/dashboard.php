@@ -53,8 +53,9 @@ if ($selected_org_id > 0) {
     $task_params[] = $selected_org_id;
 }
 if (!$can_manage_tasks) {
-    $task_conds[] = "(assigned_to LIKE ? OR assigned_to = 'All Officers')";
+    $task_conds[] = "(assigned_to LIKE ? OR assigned_to LIKE ? OR assigned_to = 'All Officers')";
     $task_params[] = '%' . $current_user_name . '%';
+    $task_params[] = '%(' . $current_role . ')%';
 }
 $base_task_where = implode(" AND ", $task_conds);
 
@@ -86,8 +87,9 @@ if ($selected_org_id > 0) {
     $up_params[] = $selected_org_id;
 }
 if (!$can_manage_tasks) {
-    $up_conds[] = "(t.assigned_to LIKE ? OR t.assigned_to = 'All Officers')";
+    $up_conds[] = "(t.assigned_to LIKE ? OR t.assigned_to LIKE ? OR t.assigned_to = 'All Officers')";
     $up_params[] = '%' . $current_user_name . '%';
+    $up_params[] = '%(' . $current_role . ')%';
 }
 $up_where = implode(" AND ", $up_conds);
 $upcoming_stmt = $pdo->prepare("SELECT t.*, o.acronym FROM tasks t JOIN organizations o ON t.org_id = o.id WHERE $up_where ORDER BY t.deadline ASC LIMIT 6");
@@ -262,9 +264,12 @@ include_once __DIR__ . '/../includes/header.php';
                 </div>
               </div>
 
-              <?php if ($can_manage_tasks): ?>
-                <a href="tasks.php?edit=<?= $task['id'] ?>" class="btn btn-secondary btn-sm" title="Edit Task"><i class="fa-solid fa-pen"></i></a>
-              <?php endif; ?>
+              <div style="display: flex; gap: 0.4rem; align-items: center;">
+                <a href="tasks.php?log_task=<?= $task['id'] ?>" class="btn btn-secondary btn-sm" title="Update Task Status & Activity Logs"><i class="fa-solid fa-clock-rotate-left"></i> Status & Logs</a>
+                <?php if ($can_manage_tasks): ?>
+                  <a href="tasks.php?edit=<?= $task['id'] ?>" class="btn btn-secondary btn-sm" title="Edit Task"><i class="fa-solid fa-pen"></i></a>
+                <?php endif; ?>
+              </div>
             </li>
           <?php endforeach; ?>
         </ul>

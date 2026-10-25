@@ -213,20 +213,12 @@ $stmt->execute($acc_params);
 $total_accomplishments = intval($stmt->fetchColumn());
 
 // ----------------------------------------------------
-// 2. Individual Task Assignment & Monitoring Breakdown
+// 2. Individual Task Assignment & Monitoring Breakdown (Per Individual Personnel)
 // ----------------------------------------------------
-$officer_stats_sql = "SELECT assigned_to,
-    COUNT(*) as total_assigned,
-    SUM(CASE WHEN status = 'Accomplished' THEN 1 ELSE 0 END) as count_accomplished,
-    SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END) as count_in_progress,
-    SUM(CASE WHEN status = 'Overdue' THEN 1 ELSE 0 END) as count_overdue,
-    SUM(CASE WHEN status = 'To Do' THEN 1 ELSE 0 END) as count_todo
-    FROM tasks WHERE $task_where_sql
-    GROUP BY assigned_to
-    ORDER BY total_assigned DESC";
-$stmt = $pdo->prepare($officer_stats_sql);
+$stmt = $pdo->prepare("SELECT tasks.*, (SELECT acronym FROM organizations WHERE id = tasks.org_id) as org_acronym FROM tasks WHERE $task_where_sql");
 $stmt->execute($task_params);
-$officer_performance = $stmt->fetchAll();
+$filtered_task_rows = $stmt->fetchAll();
+$officer_performance = getIndividualPersonnelTaskStats($pdo, $filtered_task_rows);
 
 // ----------------------------------------------------
 // 3. Projects Overview Table
@@ -511,14 +503,17 @@ include_once __DIR__ . '/../includes/header.php';
 <div class="panel" style="margin-bottom: 2rem;">
   <div class="panel-header">
     <span><i class="fa-solid fa-users-gear" style="color: var(--primary);"></i> Individual Task Assignment & Monitoring</span>
-    <span style="font-size: 0.85rem; color: var(--gray-500);"><?= count($officer_performance) ?> Assignee Groups</span>
+    <span style="font-size: 0.85rem; color: var(--gray-500);"><?= count($officer_performance) ?> Assigned Personnel</span>
   </div>
 
   <div class="table-container" style="box-shadow: none; border: none; margin: 0;">
     <table class="table">
       <thead>
         <tr>
-          <th>Assigned Officer / Team</th>
+          <?php if ($selected_org_id === 0): ?>
+            <th>Org</th>
+          <?php endif; ?>
+          <th>Assigned Personnel</th>
           <th>Total Assigned</th>
           <th>Accomplished</th>
           <th>In Progress</th>
@@ -530,7 +525,7 @@ include_once __DIR__ . '/../includes/header.php';
       <tbody>
         <?php if (empty($officer_performance)): ?>
           <tr>
-            <td colspan="7" style="text-align: center; color: var(--gray-500); padding: 2rem;">No individual task assignment data available for the selected period.</td>
+            <td colspan="<?= $selected_org_id === 0 ? '8' : '7' ?>" style="text-align: center; color: var(--gray-500); padding: 2rem;">No individual task assignment data available for the selected period.</td>
           </tr>
         <?php else: ?>
           <?php foreach ($officer_performance as $row): 
@@ -538,8 +533,11 @@ include_once __DIR__ . '/../includes/header.php';
             $rate_color = $rate >= 80 ? 'var(--success)' : ($rate >= 50 ? '#b45309' : 'var(--danger)');
           ?>
             <tr>
-              <td><strong style="color: var(--dark); font-size: 0.95rem;"><?= htmlspecialchars($row['assigned_to'] ?: 'Unassigned') ?></strong></td>
-              <td><strong><?= $row['total_assigned'] ?></strong> tasks</td>
+              <?php if ($selected_org_id === 0): ?>
+                <td><span class="badge badge-planning"><strong><?= htmlspecialchars($row['org_acronym'] ?: 'ORG') ?></strong></span></td>
+              <?php endif; ?>
+              <td><strong style="color: var(--dark); font-size: 0.95rem;"><i class="fa-solid fa-user-check" style="color: var(--primary); font-size: 0.82rem; margin-right: 0.35rem;"></i><?= htmlspecialchars($row['assigned_to'] ?: 'Unassigned') ?></strong></td>
+              <td><strong><?= $row['total_assigned'] ?></strong> <?= $row['total_assigned'] == 1 ? 'task' : 'tasks' ?></td>
               <td><span class="badge badge-accomplished"><?= $row['count_accomplished'] ?></span></td>
               <td><span class="badge badge-in-progress"><?= $row['count_in_progress'] ?></span></td>
               <td><span class="badge badge-todo"><?= $row['count_todo'] ?></span></td>
