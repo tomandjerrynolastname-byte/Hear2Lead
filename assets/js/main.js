@@ -620,6 +620,7 @@ window.initTablePagination = function(defaultPageSize = 5) {
 
     function renderPage(page) {
       currentPage = Math.min(Math.max(1, page), totalPages);
+      table.dataset.currentPage = String(currentPage);
       const startIdx = (currentPage - 1) * pageSize;
       const endIdx = Math.min(startIdx + pageSize, totalRows);
 
@@ -674,10 +675,394 @@ window.initTablePagination = function(defaultPageSize = 5) {
       });
     }
 
-    renderPage(1);
+    const initialPage = parseInt(table.dataset.currentPage || '1', 10) || 1;
+    renderPage(initialPage);
   });
 };
 
+// ==========================================================================
+// Real-Time Data Tunneling & Live Table/View Auto-Reload Engine
+// ==========================================================================
+(function() {
+  let lastKnownStateHash = null;
+  let isSyncInProgress = false;
+  let hasPendingSync = false;
+  let syncIntervalId = null;
+  let indicatorTimerId = null;
+
+  function getLiveSyncEndpointUrl() {
+    const path = window.location.pathname.toLowerCase();
+    if (path.includes('/leadership/') || path.includes('/student/')) {
+      return '../includes/live_sync.php';
+    }
+    return 'includes/live_sync.php';
+  }
+
+  function isUserBusyWithUI() {
+    // 1. Check if any modal is open
+    if (document.querySelector('.modal-backdrop.active')) return true;
+    // 2. Check if SweetAlert2 dialog is open
+    if (document.querySelector('.swal2-container')) return true;
+    // 3. Check if any calendar popover or multi-select or profile/notif dropdown is open
+    if (document.querySelector('.calendar-popover.active, .multi-select-container.open, .profile-dropdown.open')) return true;
+    // 4. Check if user is focused inside an interactive form field or contenteditable
+    const active = document.activeElement;
+    if (active && active !== document.body) {
+      const tag = (active.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || active.isContentEditable) {
+        return true;
+      }
+    }
+    // 5. Check if any inline student reply box is open
+    const openReplyBoxes = document.querySelectorAll('[id^="studentReplyBox_"]');
+    for (let i = 0; i < openReplyBoxes.length; i++) {
+      if (openReplyBoxes[i].style.display === 'block') return true;
+    }
+    return false;
+  }
+
+  function showLiveSyncIndicator(text = 'Live synced to latest data') {
+    let pill = document.getElementById('liveSyncStatusPill');
+    if (!pill) {
+      pill = document.createElement('div');
+      pill.id = 'liveSyncStatusPill';
+      pill.className = 'live-sync-indicator';
+      pill.innerHTML = `<span class="live-sync-dot"></span><span id="liveSyncStatusText"></span>`;
+      document.body.appendChild(pill);
+    }
+    const textEl = document.getElementById('liveSyncStatusText');
+    if (textEl) textEl.textContent = text;
+    pill.classList.add('visible');
+    if (indicatorTimerId) clearTimeout(indicatorTimerId);
+    indicatorTimerId = setTimeout(() => {
+      pill.classList.remove('visible');
+    }, 2400);
+  }
+
+  function normalizeHtmlForComparison(el) {
+    if (!el) return '';
+    const clone = el.cloneNode(true);
+    clone.querySelectorAll('.table-pagination-bar').forEach(b => b.remove());
+    clone.querySelectorAll('.table-paginated-hidden').forEach(r => r.classList.remove('table-paginated-hidden'));
+    clone.querySelectorAll('.live-sync-updated').forEach(u => u.classList.remove('live-sync-updated'));
+    clone.querySelectorAll('[data-current-page]').forEach(t => t.removeAttribute('data-current-page'));
+    return clone.innerHTML.replace(/\s+/g, ' ').trim();
+  }
+
+  function syncScriptDataConstants(newDoc) {
+    const scripts = newDoc.querySelectorAll('script:not([src])');
+    const targetVars = [
+      'ORG_USERS',
+      'ORG_PROJECTS',
+      'ALL_TASKS',
+      'TASK_LOGS_MAP',
+      'ALL_PROJECTS',
+      'PROJECT_TASKS_MAP',
+      'PROJECT_LOGS_MAP',
+      'ALL_ACCOMPLISHMENTS',
+      'ACC_LOGS_MAP',
+      'ALL_FEEDBACKS',
+      'FEEDBACK_LOGS_MAP',
+      'LEADERSHIP_FB_DATES',
+      'REPORT_ACTIVITY_DATES',
+      'STUDENT_LOGS_MAP',
+      'STUDENT_FB_DATES'
+    ];
+
+    scripts.forEach(scr => {
+      const code = scr.textContent || '';
+      targetVars.forEach(varName => {
+        const regex = new RegExp('const\\s+' + varName + '\\s*=\\s*([\\s\\S]*?);\\s*(?:\\r?\\n|$)');
+        const match = code.match(regex);
+        if (match && match[1]) {
+          try {
+            const parsed = JSON.parse(match[1]);
+            // Mutate global lexical constant in-place using Function evaluator
+            const updater = new Function('newVal', `
+              if (typeof ${varName} !== 'undefined' && ${varName} !== null) {
+                if (Array.isArray(${varName}) && Array.isArray(newVal)) {
+                  ${varName}.splice(0, ${varName}.length, ...newVal);
+                } else if (typeof ${varName} === 'object' && typeof newVal === 'object') {
+                  Object.keys(${varName}).forEach(k => delete ${varName}[k]);
+                  Object.assign(${varName}, newVal);
+                }
+              }
+            `);
+            updater(parsed);
+          } catch (e) {}
+        }
+      });
+    });
+  }
+
+  function syncHeaderAndNotifications(newDoc) {
+    let changed = false;
+
+    // 1. Update Users nav link pending student badge
+    const oldUsersLink = document.querySelector('.nav-links a[href*="users.php"]');
+    const newUsersLink = newDoc.querySelector('.nav-links a[href*="users.php"]');
+    if (oldUsersLink && newUsersLink && oldUsersLink.innerHTML.trim() !== newUsersLink.innerHTML.trim()) {
+      oldUsersLink.innerHTML = newUsersLink.innerHTML;
+      changed = true;
+    }
+
+    // 2. Update Header Notification Bell & Dropdown
+    const oldNotifDrop = document.getElementById('headerNotifDropdown');
+    const newNotifDrop = newDoc.getElementById('headerNotifDropdown');
+    if (oldNotifDrop && newNotifDrop && !oldNotifDrop.classList.contains('open')) {
+      const oldLatestId = oldNotifDrop.getAttribute('data-latest-id') || '0';
+      const newLatestId = newNotifDrop.getAttribute('data-latest-id') || '0';
+      if (oldLatestId !== newLatestId || normalizeHtmlForComparison(oldNotifDrop) !== normalizeHtmlForComparison(newNotifDrop)) {
+        oldNotifDrop.setAttribute('data-latest-id', newLatestId);
+        const oldMenu = oldNotifDrop.querySelector('.profile-dropdown-menu');
+        const newMenu = newNotifDrop.querySelector('.profile-dropdown-menu');
+        if (oldMenu && newMenu) {
+          oldMenu.innerHTML = newMenu.innerHTML;
+        }
+        const oldBtn = oldNotifDrop.querySelector('.notif-bell-btn');
+        const newBtn = newNotifDrop.querySelector('.notif-bell-btn');
+        if (oldBtn && newBtn) {
+          oldBtn.innerHTML = newBtn.innerHTML;
+        }
+        const badge = document.getElementById('headerNotifBadge');
+        if (badge) {
+          try {
+            const readId = parseInt(localStorage.getItem('hear2lead_read_notif_id') || '0', 10);
+            const latestNum = parseInt(newLatestId, 10);
+            if (latestNum > 0 && readId >= latestNum) {
+              badge.style.display = 'none';
+            }
+          } catch (e) {}
+        }
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  window.syncPageContentToLatest = async function() {
+    if (isSyncInProgress) return false;
+    isSyncInProgress = true;
+    let anyUpdated = false;
+
+    try {
+      const response = await fetch(window.location.href, {
+        method: 'GET',
+        cache: 'no-store',
+        headers: {
+          'X-Live-Sync': '1',
+          'Cache-Control': 'no-cache'
+        }
+      });
+      if (!response.ok) return false;
+
+      const htmlText = await response.text();
+      const parser = new DOMParser();
+      const newDoc = parser.parseFromString(htmlText, 'text/html');
+
+      // Save current pagination page for every table on screen
+      const savedTablePages = Array.from(document.querySelectorAll('table.table')).map(
+        t => t.dataset.currentPage || '1'
+      );
+
+      // 1. Update in-memory JS constants for modals & logs
+      syncScriptDataConstants(newDoc);
+
+      // 2. Sync Header Notifications & Nav Badges
+      if (syncHeaderAndNotifications(newDoc)) {
+        anyUpdated = true;
+      }
+
+      // 3. Sync Tab Counter Badges (.user-tabs-nav .user-tab-badge)
+      const oldTabNavs = document.querySelectorAll('.user-tabs-nav');
+      const newTabNavs = newDoc.querySelectorAll('.user-tabs-nav');
+      oldTabNavs.forEach((oldNav, navIdx) => {
+        const newNav = newTabNavs[navIdx];
+        if (!newNav) return;
+        const oldBadges = oldNav.querySelectorAll('.user-tab-badge');
+        const newBadges = newNav.querySelectorAll('.user-tab-badge');
+        oldBadges.forEach((oldB, bIdx) => {
+          const newB = newBadges[bIdx];
+          if (newB && oldB.textContent.trim() !== newB.textContent.trim()) {
+            oldB.textContent = newB.textContent;
+            oldB.style.background = newB.style.background;
+            oldB.style.color = newB.style.color;
+            anyUpdated = true;
+          }
+        });
+      });
+
+      // 4. Sync Tab Panes (.user-tab-pane) while preserving active tab
+      const oldPanes = document.querySelectorAll('.user-tab-pane');
+      oldPanes.forEach((oldPane, idx) => {
+        const paneId = oldPane.id;
+        const newPane = paneId ? newDoc.getElementById(paneId) : newDoc.querySelectorAll('.user-tab-pane')[idx];
+        if (newPane && normalizeHtmlForComparison(oldPane) !== normalizeHtmlForComparison(newPane)) {
+          oldPane.innerHTML = newPane.innerHTML;
+          oldPane.classList.add('live-sync-updated');
+          anyUpdated = true;
+        }
+      });
+
+      // 5. Sync KPI Stat Grids (.stats-grid)
+      const oldStatGrids = document.querySelectorAll('.stats-grid');
+      const newStatGrids = newDoc.querySelectorAll('.stats-grid');
+      oldStatGrids.forEach((oldGrid, idx) => {
+        const newGrid = newStatGrids[idx];
+        if (newGrid && normalizeHtmlForComparison(oldGrid) !== normalizeHtmlForComparison(newGrid)) {
+          oldGrid.innerHTML = newGrid.innerHTML;
+          oldGrid.classList.add('live-sync-updated');
+          anyUpdated = true;
+        }
+      });
+
+      // 6. Sync Tables outside .user-tab-pane (e.g., reports.php, notifications.php, dashboard.php)
+      const oldStandaloneTables = Array.from(document.querySelectorAll('table.table')).filter(t => !t.closest('.user-tab-pane'));
+      const newStandaloneTables = Array.from(newDoc.querySelectorAll('table.table')).filter(t => !t.closest('.user-tab-pane'));
+      oldStandaloneTables.forEach((oldTable, idx) => {
+        const newTable = newStandaloneTables[idx];
+        if (newTable && normalizeHtmlForComparison(oldTable) !== normalizeHtmlForComparison(newTable)) {
+          oldTable.innerHTML = newTable.innerHTML;
+          oldTable.classList.add('live-sync-updated');
+          anyUpdated = true;
+        }
+      });
+
+      // 7. Sync Panel Headers outside .user-tab-pane
+      const oldPanelHeaders = Array.from(document.querySelectorAll('.panel-header')).filter(h => !h.closest('.user-tab-pane'));
+      const newPanelHeaders = Array.from(newDoc.querySelectorAll('.panel-header')).filter(h => !h.closest('.user-tab-pane'));
+      oldPanelHeaders.forEach((oldH, idx) => {
+        const newH = newPanelHeaders[idx];
+        if (newH && normalizeHtmlForComparison(oldH) !== normalizeHtmlForComparison(newH)) {
+          oldH.innerHTML = newH.innerHTML;
+          anyUpdated = true;
+        }
+      });
+
+      // 8. Sync Dynamic Non-Table Containers inside <main class="main-content"> (e.g., .layout-split, .card-grid, feedbacks list)
+      const oldMain = document.querySelector('main.main-content');
+      const newMain = newDoc.querySelector('main.main-content');
+      if (oldMain && newMain) {
+        const skipSelector = '.page-header, .hero-card, .filter-bar, .stats-grid, .user-tabs-nav, .user-tab-pane, .modal-backdrop, script, style, .toast';
+        const oldBlocks = Array.from(oldMain.children).filter(el => !el.matches(skipSelector) && !el.querySelector('.user-tab-pane'));
+        const newBlocks = Array.from(newMain.children).filter(el => !el.matches(skipSelector) && !el.querySelector('.user-tab-pane'));
+        oldBlocks.forEach((oldBlock, idx) => {
+          const newBlock = newBlocks[idx];
+          if (!newBlock) return;
+          // If this block contains a standalone table, we already synced the table above unless transitioning from empty state
+          const hadTable = !!oldBlock.querySelector('table.table');
+          const hasTableNow = !!newBlock.querySelector('table.table');
+          if ((!hadTable || !hasTableNow) && normalizeHtmlForComparison(oldBlock) !== normalizeHtmlForComparison(newBlock)) {
+            oldBlock.innerHTML = newBlock.innerHTML;
+            oldBlock.classList.add('live-sync-updated');
+            anyUpdated = true;
+          }
+        });
+      }
+
+      // 9. Sync Official Print Report Sheet (leadership/print_report.php) if present
+      const printSectionIds = ['sec-kpis', 'sec-officers', 'sec-tasks', 'sec-projects', 'sec-accomplishments', 'sec-logs'];
+      printSectionIds.forEach(secId => {
+        const oldSec = document.getElementById(secId);
+        const newSec = newDoc.getElementById(secId);
+        if (oldSec && newSec && normalizeHtmlForComparison(oldSec) !== normalizeHtmlForComparison(newSec)) {
+          oldSec.innerHTML = newSec.innerHTML;
+          anyUpdated = true;
+        }
+      });
+
+      // 10. Restore saved table pagination pages and re-initialize 5-per-page paginator
+      const updatedTables = document.querySelectorAll('table.table');
+      updatedTables.forEach((t, idx) => {
+        if (savedTablePages[idx]) {
+          t.dataset.currentPage = savedTablePages[idx];
+        }
+      });
+      window.initTablePagination(5);
+
+      if (anyUpdated) {
+        showLiveSyncIndicator('Updated to latest changes');
+      }
+      return anyUpdated;
+    } catch (err) {
+      return false;
+    } finally {
+      isSyncInProgress = false;
+    }
+  };
+
+  async function pollLiveSyncTunnel() {
+    if (document.visibilityState === 'hidden') return;
+
+    // If a sync was deferred while the user was busy in a modal/input, run it as soon as they finish
+    if (hasPendingSync && !isUserBusyWithUI()) {
+      hasPendingSync = false;
+      await window.syncPageContentToLatest();
+      return;
+    }
+
+    try {
+      const endpoint = getLiveSyncEndpointUrl();
+      const res = await fetch(`${endpoint}?_t=${Date.now()}`, {
+        method: 'GET',
+        cache: 'no-store',
+        headers: { 'Accept': 'application/json' }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data || data.status !== 'ok' || !data.state_hash) return;
+
+      if (lastKnownStateHash === null) {
+        lastKnownStateHash = data.state_hash;
+        return;
+      }
+
+      if (data.state_hash !== lastKnownStateHash) {
+        lastKnownStateHash = data.state_hash;
+        if (isUserBusyWithUI()) {
+          hasPendingSync = true;
+        } else {
+          await window.syncPageContentToLatest();
+        }
+      }
+    } catch (e) {
+      // Ignore transient network errors during background polling
+    }
+  }
+
+  window.initLiveSyncTunnel = function(intervalMs = 3000) {
+    if (syncIntervalId) clearInterval(syncIntervalId);
+    pollLiveSyncTunnel();
+    syncIntervalId = setInterval(pollLiveSyncTunnel, intervalMs);
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        pollLiveSyncTunnel();
+      }
+    });
+
+    // Trigger deferred sync immediately when user closes a modal or leaves an input field
+    document.addEventListener('focusout', () => {
+      if (hasPendingSync && !isUserBusyWithUI()) {
+        hasPendingSync = false;
+        window.syncPageContentToLatest();
+      }
+    });
+    document.addEventListener('click', () => {
+      if (hasPendingSync && !isUserBusyWithUI()) {
+        setTimeout(() => {
+          if (hasPendingSync && !isUserBusyWithUI()) {
+            hasPendingSync = false;
+            window.syncPageContentToLatest();
+          }
+        }, 150);
+      }
+    });
+  };
+})();
+
 document.addEventListener('DOMContentLoaded', () => {
   window.initTablePagination(5);
+  window.initLiveSyncTunnel(3000);
 });

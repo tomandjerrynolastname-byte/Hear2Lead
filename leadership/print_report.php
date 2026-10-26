@@ -1510,5 +1510,6 @@ $back_query = http_build_query([
     });
     <?php endif; ?>
   </script>
+  <script src="../assets/js/main.js?v=<?= @filemtime(__DIR__ . '/../assets/js/main.js') ?: time() ?>"></script>
 </body>
 </html>
