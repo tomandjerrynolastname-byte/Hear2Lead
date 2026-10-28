@@ -1,6 +1,12 @@
 <?php
 // config/db.php - Database connection with auto-initialization & Supabase PostgreSQL support
 
+// Suppress deprecation and notice output in production serverless runtimes
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
+if (getenv('VERCEL')) {
+    ini_set('display_errors', '0');
+}
+
 // Default local environment constants (overridden by environment variables if present)
 if (!defined('DB_HOST')) define('DB_HOST', getenv('DB_HOST') ?: '127.0.0.1');
 if (!defined('DB_USER')) define('DB_USER', getenv('DB_USER') ?: 'root');
@@ -68,14 +74,17 @@ class SupabaseSessionHandler implements SessionHandlerInterface {
         $this->pdo = $pdo;
     }
 
+    #[\ReturnTypeWillChange]
     public function open($path, $name) {
         return true;
     }
 
+    #[\ReturnTypeWillChange]
     public function close() {
         return true;
     }
 
+    #[\ReturnTypeWillChange]
     public function read($id) {
         try {
             $stmt = $this->pdo->prepare("SELECT data FROM user_sessions WHERE id = ?");
@@ -87,6 +96,7 @@ class SupabaseSessionHandler implements SessionHandlerInterface {
         }
     }
 
+    #[\ReturnTypeWillChange]
     public function write($id, $data) {
         try {
             // PostgreSQL upsert
@@ -103,6 +113,7 @@ class SupabaseSessionHandler implements SessionHandlerInterface {
         }
     }
 
+    #[\ReturnTypeWillChange]
     public function destroy($id) {
         try {
             $stmt = $this->pdo->prepare("DELETE FROM user_sessions WHERE id = ?");
@@ -112,6 +123,7 @@ class SupabaseSessionHandler implements SessionHandlerInterface {
         }
     }
 
+    #[\ReturnTypeWillChange]
     public function gc($max_lifetime) {
         try {
             $stmt = $this->pdo->prepare("DELETE FROM user_sessions WHERE last_activity < ?");
