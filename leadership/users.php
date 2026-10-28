@@ -275,11 +275,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $approved_by_val = ($status === 'Approved') ? $current_user_id : null;
                     if (!empty($new_password)) {
                         $hashed_password = password_hash($new_password, PASSWORD_BCRYPT);
-                        $stmt = $pdo->prepare("UPDATE students SET student_lrn = ?, full_name = ?, grade_section = ?, email = ?, password = ?, status = ?, approved_by = IF(? = 'Approved' AND approved_by IS NULL, ?, approved_by), approved_at = IF(? = 'Approved' AND approved_at IS NULL, NOW(), approved_at) WHERE id = ?");
-                        $stmt->execute([$student_lrn, $full_name, $grade_section, $email ?: null, $hashed_password, $status, $status, $approved_by_val, $status, $student_id]);
+                        $stmt = $pdo->prepare("UPDATE students SET student_lrn = ?, full_name = ?, grade_section = ?, email = ?, password = ?, status = ?, approved_by = COALESCE(approved_by, ?), approved_at = COALESCE(approved_at, CURRENT_TIMESTAMP) WHERE id = ?");
+                        $stmt->execute([$student_lrn, $full_name, $grade_section, $email ?: null, $hashed_password, $status, $approved_by_val, $student_id]);
                     } else {
-                        $stmt = $pdo->prepare("UPDATE students SET student_lrn = ?, full_name = ?, grade_section = ?, email = ?, status = ?, approved_by = IF(? = 'Approved' AND approved_by IS NULL, ?, approved_by), approved_at = IF(? = 'Approved' AND approved_at IS NULL, NOW(), approved_at) WHERE id = ?");
-                        $stmt->execute([$student_lrn, $full_name, $grade_section, $email ?: null, $status, $status, $approved_by_val, $status, $student_id]);
+                        $stmt = $pdo->prepare("UPDATE students SET student_lrn = ?, full_name = ?, grade_section = ?, email = ?, status = ?, approved_by = COALESCE(approved_by, ?), approved_at = COALESCE(approved_at, CURRENT_TIMESTAMP) WHERE id = ?");
+                        $stmt->execute([$student_lrn, $full_name, $grade_section, $email ?: null, $status, $approved_by_val, $student_id]);
                     }
 
                     if (function_exists('recordStudentAccountLog')) {

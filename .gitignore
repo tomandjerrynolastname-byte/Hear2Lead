@@ -1,0 +1,21 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Vercel deployment cache
+.vercel
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Temporary / Scratch files
+scratch/*.log
