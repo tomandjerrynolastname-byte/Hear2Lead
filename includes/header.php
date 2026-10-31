@@ -115,7 +115,7 @@ if ($is_admin && isset($pdo)) {
         $header_pending_tickets = 0;
     }
 }
-if ($is_officer_logged_in && $can_manage_users && isset($pdo)) {
+if ($is_admin && isset($pdo)) {
     try {
         $header_pending_students = intval($pdo->query("SELECT COUNT(*) FROM students WHERE status = 'Pending'")->fetchColumn());
     } catch (PDOException $e) {
@@ -200,7 +200,7 @@ $default_header_notif_tab = ($is_admin && empty($header_task_reminders)) ? 'logi
             <li>
               <a href="../leadership/users.php" class="nav-link <?= $current_page == 'users.php' ? 'active' : '' ?>">
                 <i class="fa-solid fa-users-gear"></i> Users
-                <?php if ($header_pending_students > 0): ?>
+                <?php if ($is_admin && $header_pending_students > 0): ?>
                   <span class="badge" style="background: #dc2626; color: white; font-size: 0.65rem; padding: 2px 6px; border-radius: 10px; margin-left: 2px; font-weight: 800; vertical-align: middle;" title="<?= $header_pending_students ?> student registration(s) pending approval"><?= $header_pending_students ?></span>
                 <?php endif; ?>
               </a>
@@ -254,7 +254,7 @@ $default_header_notif_tab = ($is_admin && empty($header_task_reminders)) ? 'logi
                 </div>
               <?php endif; ?>
 
-              <?php if (!empty($header_pending_students)): ?>
+              <?php if ($is_admin && !empty($header_pending_students)): ?>
                 <a href="../leadership/users.php?tab=students&student_status=pending" style="display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.85rem; background: #fffbeb; border-bottom: 1.5px solid #fde68a; text-decoration: none; color: #92400e; font-size: 0.8rem; font-weight: 700;">
                   <span><i class="fa-solid fa-clock" style="color: #d97706; margin-right: 4px;"></i> <?= $header_pending_students ?> Student Registration(s) Pending Approval</span>
                   <span style="background: #d97706; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem;">Review</span>

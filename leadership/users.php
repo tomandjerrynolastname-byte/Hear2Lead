@@ -23,7 +23,7 @@ $success_msg = '';
 $error_msg = '';
 
 $req_tab = $_GET['tab'] ?? 'leaders';
-if ($req_tab === 'students') {
+if ($req_tab === 'students' && $is_admin) {
     $active_tab = 'students';
 } elseif ($req_tab === 'roles' && $is_admin) {
     $active_tab = 'roles';
@@ -603,58 +603,68 @@ if ($is_admin) {
     $leader_count = $stmt_lc->fetchColumn();
 }
 
-// 3. Students Query Scoping with Status Filters
-$search_students = trim($_GET['q_students'] ?? '');
-$filter_student_status = trim($_GET['student_status'] ?? 'all');
-$student_where = ["1=1"];
-$student_params = [];
-
-if (!empty($search_students)) {
-    $student_where[] = "(s.full_name LIKE ? OR s.student_lrn LIKE ? OR s.grade_section LIKE ? OR s.email LIKE ?)";
-    $student_params[] = "%$search_students%";
-    $student_params[] = "%$search_students%";
-    $student_params[] = "%$search_students%";
-    $student_params[] = "%$search_students%";
-}
-
-if ($filter_student_status === 'pending') {
-    $student_where[] = "s.status = 'Pending'";
-} elseif ($filter_student_status === 'approved') {
-    $student_where[] = "s.status = 'Approved'";
-} elseif ($filter_student_status === 'rejected') {
-    $student_where[] = "s.status = 'Rejected'";
-}
-
-$student_where_sql = implode(" AND ", $student_where);
-$sql_students = "SELECT s.*, u.full_name as approver_name FROM students s LEFT JOIN users u ON s.approved_by = u.id WHERE $student_where_sql ORDER BY CASE s.status WHEN 'Pending' THEN 1 WHEN 'Approved' THEN 2 ELSE 3 END ASC, s.created_at DESC";
-$stmt_students = $pdo->prepare($sql_students);
-$stmt_students->execute($student_params);
-$students = $stmt_students->fetchAll();
-
-$student_count = intval($pdo->query("SELECT COUNT(*) FROM students")->fetchColumn());
-$pending_students_count = intval($pdo->query("SELECT COUNT(*) FROM students WHERE status = 'Pending'")->fetchColumn());
-$approved_students_count = intval($pdo->query("SELECT COUNT(*) FROM students WHERE status = 'Approved'")->fetchColumn());
-$rejected_students_count = intval($pdo->query("SELECT COUNT(*) FROM students WHERE status = 'Rejected'")->fetchColumn());
-
-// Fetch Student Account Approval & Status Logs
+// 3. Students Query Scoping with Status Filters (Admin Only)
+$students = [];
+$student_count = 0;
+$pending_students_count = 0;
+$approved_students_count = 0;
+$rejected_students_count = 0;
 $all_student_logs = [];
 $student_logs_map = [];
 $students_map_by_id = [];
-foreach ($students as $st_item) {
-    $students_map_by_id[intval($st_item['id'])] = $st_item;
-}
-try {
-    $stmt_slogs = $pdo->query("SELECT sl.*, DATE_FORMAT(sl.created_at, '%b %d, %Y • %h:%i %p') as formatted_time FROM student_logs sl ORDER BY sl.created_at DESC, sl.id DESC");
-    $all_student_logs = $stmt_slogs->fetchAll();
-    foreach ($all_student_logs as $sl) {
-        $sid = intval($sl['student_id'] ?? 0);
-        if ($sid > 0) {
-            $student_logs_map[$sid][] = $sl;
-        }
+$search_students = '';
+$filter_student_status = 'all';
+
+if ($is_admin) {
+    $search_students = trim($_GET['q_students'] ?? '');
+    $filter_student_status = trim($_GET['student_status'] ?? 'all');
+    $student_where = ["1=1"];
+    $student_params = [];
+
+    if (!empty($search_students)) {
+        $student_where[] = "(s.full_name LIKE ? OR s.student_lrn LIKE ? OR s.grade_section LIKE ? OR s.email LIKE ?)";
+        $student_params[] = "%$search_students%";
+        $student_params[] = "%$search_students%";
+        $student_params[] = "%$search_students%";
+        $student_params[] = "%$search_students%";
     }
-} catch (PDOException $e) {
-    $all_student_logs = [];
-    $student_logs_map = [];
+
+    if ($filter_student_status === 'pending') {
+        $student_where[] = "s.status = 'Pending'";
+    } elseif ($filter_student_status === 'approved') {
+        $student_where[] = "s.status = 'Approved'";
+    } elseif ($filter_student_status === 'rejected') {
+        $student_where[] = "s.status = 'Rejected'";
+    }
+
+    $student_where_sql = implode(" AND ", $student_where);
+    $sql_students = "SELECT s.*, u.full_name as approver_name FROM students s LEFT JOIN users u ON s.approved_by = u.id WHERE $student_where_sql ORDER BY CASE s.status WHEN 'Pending' THEN 1 WHEN 'Approved' THEN 2 ELSE 3 END ASC, s.created_at DESC";
+    $stmt_students = $pdo->prepare($sql_students);
+    $stmt_students->execute($student_params);
+    $students = $stmt_students->fetchAll();
+
+    $student_count = intval($pdo->query("SELECT COUNT(*) FROM students")->fetchColumn());
+    $pending_students_count = intval($pdo->query("SELECT COUNT(*) FROM students WHERE status = 'Pending'")->fetchColumn());
+    $approved_students_count = intval($pdo->query("SELECT COUNT(*) FROM students WHERE status = 'Approved'")->fetchColumn());
+    $rejected_students_count = intval($pdo->query("SELECT COUNT(*) FROM students WHERE status = 'Rejected'")->fetchColumn());
+
+    // Fetch Student Account Approval & Status Logs
+    foreach ($students as $st_item) {
+        $students_map_by_id[intval($st_item['id'])] = $st_item;
+    }
+    try {
+        $stmt_slogs = $pdo->query("SELECT sl.*, DATE_FORMAT(sl.created_at, '%b %d, %Y • %h:%i %p') as formatted_time FROM student_logs sl ORDER BY sl.created_at DESC, sl.id DESC");
+        $all_student_logs = $stmt_slogs->fetchAll();
+        foreach ($all_student_logs as $sl) {
+            $sid = intval($sl['student_id'] ?? 0);
+            if ($sid > 0) {
+                $student_logs_map[$sid][] = $sl;
+            }
+        }
+    } catch (PDOException $e) {
+        $all_student_logs = [];
+        $student_logs_map = [];
+    }
 }
 $role_count = count($role_library);
 
@@ -711,7 +721,7 @@ include_once __DIR__ . '/../includes/header.php';
       <?php if ($is_admin): ?>
         Manage leader and officer accounts across all organizations, configure verified student accounts, and customize the <strong>User Role Library & System Accessibility</strong>.
       <?php else: ?>
-        Manage leader and officer accounts for <strong><?= htmlspecialchars($_SESSION['org_name']) ?> (<?= htmlspecialchars($_SESSION['org_acronym']) ?>)</strong>, and view student portal accounts.
+        Manage leader and officer accounts for <strong><?= htmlspecialchars($_SESSION['org_name']) ?> (<?= htmlspecialchars($_SESSION['org_acronym']) ?>)</strong>.
       <?php endif; ?>
     </p>
   </div>
@@ -762,17 +772,17 @@ include_once __DIR__ . '/../includes/header.php';
     <span>Leaders & Officers Accounts</span>
     <span class="user-tab-badge"><?= $leader_count ?></span>
   </button>
-  <button type="button" class="user-tab-btn <?= $active_tab === 'students' ? 'active' : '' ?>" id="tab-btn-students" onclick="switchUserTab('students')">
-    <i class="fa-solid fa-graduation-cap"></i>
-    <span>Student Accounts</span>
-    <span class="user-tab-badge"><?= $student_count ?></span>
-    <?php if (!empty($pending_students_count)): ?>
-      <span class="badge" style="background: #dc2626; color: #ffffff; font-size: 0.7rem; padding: 2px 7px; border-radius: 12px; margin-left: 4px; font-weight: 800; display: inline-flex; align-items: center; gap: 3px;" title="<?= $pending_students_count ?> student registration(s) pending approval">
-        <i class="fa-solid fa-clock"></i> <?= $pending_students_count ?> Pending
-      </span>
-    <?php endif; ?>
-  </button>
   <?php if ($is_admin): ?>
+    <button type="button" class="user-tab-btn <?= $active_tab === 'students' ? 'active' : '' ?>" id="tab-btn-students" onclick="switchUserTab('students')">
+      <i class="fa-solid fa-graduation-cap"></i>
+      <span>Student Accounts</span>
+      <span class="user-tab-badge"><?= $student_count ?></span>
+      <?php if (!empty($pending_students_count)): ?>
+        <span class="badge" style="background: #dc2626; color: #ffffff; font-size: 0.7rem; padding: 2px 7px; border-radius: 12px; margin-left: 4px; font-weight: 800; display: inline-flex; align-items: center; gap: 3px;" title="<?= $pending_students_count ?> student registration(s) pending approval">
+          <i class="fa-solid fa-clock"></i> <?= $pending_students_count ?> Pending
+        </span>
+      <?php endif; ?>
+    </button>
     <button type="button" class="user-tab-btn <?= $active_tab === 'roles' ? 'active' : '' ?>" id="tab-btn-roles" onclick="switchUserTab('roles')">
       <i class="fa-solid fa-id-badge"></i>
       <span>Role Library & Accessibility</span>
@@ -904,8 +914,9 @@ include_once __DIR__ . '/../includes/header.php';
   </div>
 </div>
 
+<?php if ($is_admin): ?>
 <!-- ======================================================== -->
-<!-- TAB 2: STUDENT ACCOUNTS PANE                             -->
+<!-- TAB 2: STUDENT ACCOUNTS PANE (ADMIN ONLY)                -->
 <!-- ======================================================== -->
 <div class="user-tab-pane <?= $active_tab === 'students' ? 'active' : '' ?>" id="tab-students">
 
@@ -1132,6 +1143,7 @@ include_once __DIR__ . '/../includes/header.php';
     <?php endif; ?>
   </div>
 </div>
+<?php endif; ?>
 
 <?php if ($is_admin): ?>
 <!-- ======================================================== -->
@@ -1897,7 +1909,6 @@ include_once __DIR__ . '/../includes/header.php';
     </form>
   </div>
 </div>
-<?php endif; ?>
 
 <!-- ======================================================== -->
 <!-- MODAL: VIEW STUDENT ACCOUNT STATUS & APPROVAL LOGS       -->
@@ -1925,7 +1936,6 @@ include_once __DIR__ . '/../includes/header.php';
   </div>
 </div>
 
-<?php if ($is_admin): ?>
 <!-- ======================================================== -->
 <!-- MODAL: RESOLVE PASSWORD RESET TICKET (ADMIN ONLY)        -->
 <!-- ======================================================== -->
@@ -2045,19 +2055,19 @@ function switchUserTab(tabName) {
   btns.forEach(function(btn) { btn.classList.remove('active'); });
   panes.forEach(function(pane) { pane.classList.remove('active'); });
 
-  if (tabName === 'students') {
+  if (tabName === 'students' && <?= $is_admin ? 'true' : 'false' ?>) {
     var btnSt = document.getElementById('tab-btn-students');
     if (btnSt) btnSt.classList.add('active');
     var stPane = document.getElementById('tab-students');
     if (stPane) stPane.classList.add('active');
     history.replaceState(null, '', 'users.php?tab=students');
-  } else if (tabName === 'roles') {
+  } else if (tabName === 'roles' && <?= $is_admin ? 'true' : 'false' ?>) {
     var btnRl = document.getElementById('tab-btn-roles');
     if (btnRl) btnRl.classList.add('active');
     var rlPane = document.getElementById('tab-roles');
     if (rlPane) rlPane.classList.add('active');
     history.replaceState(null, '', 'users.php?tab=roles');
-  } else if (tabName === 'tickets') {
+  } else if (tabName === 'tickets' && <?= $is_admin ? 'true' : 'false' ?>) {
     var btnTk = document.getElementById('tab-btn-tickets');
     if (btnTk) btnTk.classList.add('active');
     var tkPane = document.getElementById('tab-tickets');
@@ -2180,7 +2190,6 @@ function openStudentEditModal(student) {
   
   document.getElementById('editStudentModal').classList.add('active');
 }
-<?php endif; ?>
 
 const STUDENT_LOGS_MAP = <?= json_encode($student_logs_map) ?>;
 const STUDENTS_BY_ID = <?= json_encode($students_map_by_id) ?>;
@@ -2380,6 +2389,7 @@ function openRejectTicketModal(ticket) {
   document.getElementById('rejectTicketModal').classList.add('active');
   document.body.style.overflow = 'hidden';
 }
+<?php endif; ?>
 
 // Sync active tab on initial load if hash is set
 document.addEventListener('DOMContentLoaded', function() {

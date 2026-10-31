@@ -131,7 +131,7 @@ try {
 
     $ticket_id = intval($pdo->lastInsertId());
 
-    sendResponse(true, "Your password reset ticket has been submitted to the System Administrator!", [
+    sendResponse(true, "Your password reset ticket has been submitted to the system administrator.", [
         'ticket_id' => $ticket_id,
         'user_name' => $user_name,
         'account_type' => $account_type_db,

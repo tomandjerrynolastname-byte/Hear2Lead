@@ -374,6 +374,13 @@ $base_path = $is_subfolder ? '../' : './';
   </div>
 </div>
 
+<!-- Ensure SweetAlert2 is loaded on any page using the auth modal -->
+<script>
+if (typeof Swal === 'undefined') {
+  document.write('<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"><\/script>');
+}
+</script>
+
 <script>
 // Toggle Password Visibility Eye Icon
 function togglePassVisibility(inputId, btn) {
@@ -723,36 +730,72 @@ function handleForgotPassSubmit(e) {
       if (formEl) formEl.reset();
       refreshForgotCaptcha();
 
-      if (typeof Swal !== 'undefined') {
+      const ticketNum = data.ticket_id ? `#${data.ticket_id}` : '';
+      const userName = data.user_name || '';
+      const accountDetails = data.account_details || '';
+
+      const triggerSuccessSwal = () => {
         Swal.fire({
           icon: 'success',
-          title: 'Reset Ticket Submitted!',
+          title: 'Ticket Submitted!',
+          text: 'Your password reset ticket has been submitted to the system administrator.',
           html: `<div style="text-align: left; font-size: 0.9rem; line-height: 1.5;">
+                   <p style="margin: 0 0 12px; color: #1e293b; font-weight: 700; font-size: 0.98rem; text-align: center;">
+                     Your password reset ticket has been submitted to the system administrator.
+                   </p>
+                   ${ticketNum ? `
                    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
-                     <strong style="color: #166534; display: block; font-size: 1rem;"><i class="fa-solid fa-ticket"></i> Reset Ticket #${data.ticket_id}</strong>
-                     <span style="color: #15803d; font-size: 0.85rem;">Account: <strong>${data.user_name}</strong></span><br>
-                     <span style="color: #64748b; font-size: 0.8rem;">Details: ${data.account_details}</span>
-                   </div>
-                   <p style="margin: 0; color: #334155;">Your password reset request has been logged for <strong>Administrator review</strong>. The admin can verify and reset your password in the admin panel.</p>
+                     <strong style="color: #166534; display: block; font-size: 0.95rem;"><i class="fa-solid fa-ticket"></i> Reset Ticket ${ticketNum}</strong>
+                     ${userName ? `<span style="color: #15803d; font-size: 0.85rem;">Account: <strong>${userName}</strong></span><br>` : ''}
+                     ${accountDetails ? `<span style="color: #64748b; font-size: 0.8rem;">Details: ${accountDetails}</span>` : ''}
+                   </div>` : ''}
+                   <p style="margin: 0; color: #475569; font-size: 0.82rem; text-align: center;">
+                     The administrator can review your request and reset your password in the admin panel.
+                   </p>
                  </div>`,
           confirmButtonColor: '#641914',
-          confirmButtonText: 'Return to Sign In'
+          confirmButtonText: 'Return to Sign In',
+          allowOutsideClick: false
         }).then(() => {
           switchAuthTab(accType === 'leadership' ? 'officer' : 'student');
         });
+      };
+
+      if (typeof Swal !== 'undefined') {
+        triggerSuccessSwal();
       } else {
-        alert(data.message);
-        switchAuthTab(accType === 'leadership' ? 'officer' : 'student');
+        const swalScript = document.createElement('script');
+        swalScript.src = 'https://cdn.jsdelivr.net/npm/sweetalert2@11';
+        swalScript.onload = triggerSuccessSwal;
+        swalScript.onerror = () => {
+          alert('Your password reset ticket has been submitted to the system administrator.');
+          switchAuthTab(accType === 'leadership' ? 'officer' : 'student');
+        };
+        document.head.appendChild(swalScript);
       }
     } else {
       refreshForgotCaptcha();
-      if (data.is_duplicate && typeof Swal !== 'undefined') {
+      const triggerWarningSwal = () => {
         Swal.fire({
           icon: 'warning',
           title: 'Active Ticket Pending',
           text: data.message,
           confirmButtonColor: '#641914'
         });
+      };
+
+      if (data.is_duplicate) {
+        if (typeof Swal !== 'undefined') {
+          triggerWarningSwal();
+        } else {
+          const swalScript = document.createElement('script');
+          swalScript.src = 'https://cdn.jsdelivr.net/npm/sweetalert2@11';
+          swalScript.onload = triggerWarningSwal;
+          swalScript.onerror = () => {
+            showError(data.message || 'Failed to submit reset ticket.');
+          };
+          document.head.appendChild(swalScript);
+        }
       } else {
         showError(data.message || 'Failed to submit reset ticket.');
       }
@@ -816,11 +859,41 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (successParam) {
-      const successBox = document.getElementById('authModalSuccess');
-      const successText = document.getElementById('authModalSuccessText');
-      if (successBox && successText) {
-        successText.textContent = successParam;
-        successBox.style.display = 'block';
+      if (modalParam === 'forgot' || successParam.toLowerCase().includes('reset ticket') || successParam.toLowerCase().includes('administrator')) {
+        const triggerUrlSwal = () => {
+          Swal.fire({
+            icon: 'success',
+            title: 'Ticket Submitted!',
+            text: 'Your password reset ticket has been submitted to the system administrator.',
+            html: `<div style="text-align: center; font-size: 0.92rem; line-height: 1.5; color: #1e293b;">
+                     <p style="font-weight: 700; font-size: 1rem; margin-bottom: 8px;">
+                       Your password reset ticket has been submitted to the system administrator.
+                     </p>
+                     <p style="color: #475569; font-size: 0.85rem; margin: 0;">
+                       ${successParam}
+                     </p>
+                   </div>`,
+            confirmButtonColor: '#641914',
+            confirmButtonText: 'Return to Sign In'
+          }).then(() => {
+            switchAuthTab('student');
+          });
+        };
+        if (typeof Swal !== 'undefined') {
+          triggerUrlSwal();
+        } else {
+          const swalScript = document.createElement('script');
+          swalScript.src = 'https://cdn.jsdelivr.net/npm/sweetalert2@11';
+          swalScript.onload = triggerUrlSwal;
+          document.head.appendChild(swalScript);
+        }
+      } else {
+        const successBox = document.getElementById('authModalSuccess');
+        const successText = document.getElementById('authModalSuccessText');
+        if (successBox && successText) {
+          successText.textContent = successParam;
+          successBox.style.display = 'block';
+        }
       }
     }
   }
