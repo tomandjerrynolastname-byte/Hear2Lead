@@ -36,7 +36,7 @@ if (empty($identifier) || empty($password)) {
     $stmt->execute([$identifier, $identifier]);
     $student = $stmt->fetch();
 
-    if ($student && (password_verify($password, $student['password']) || $password === 'student123')) {
+    if ($student && password_verify($password, $student['password'])) {
         $account_status = $student['status'] ?? 'Approved';
 
         // Check if account has been approved by an administrator

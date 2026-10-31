@@ -107,6 +107,14 @@ $notif_total_count = $is_admin
     : count($header_task_reminders);
 $notif_signature_id = $latest_notif_id * 10000 + $latest_act_id * 100 + count($header_task_reminders) * 10 + $urgent_reminder_count;
 $header_pending_students = 0;
+$header_pending_tickets = 0;
+if ($is_admin && isset($pdo)) {
+    try {
+        $header_pending_tickets = intval($pdo->query("SELECT COUNT(*) FROM password_reset_tickets WHERE status = 'Pending'")->fetchColumn());
+    } catch (PDOException $e) {
+        $header_pending_tickets = 0;
+    }
+}
 if ($is_officer_logged_in && $can_manage_users && isset($pdo)) {
     try {
         $header_pending_students = intval($pdo->query("SELECT COUNT(*) FROM students WHERE status = 'Pending'")->fetchColumn());
@@ -114,6 +122,7 @@ if ($is_officer_logged_in && $can_manage_users && isset($pdo)) {
         $header_pending_students = 0;
     }
 }
+$notif_total_count += $header_pending_tickets;
 $default_header_notif_tab = ($is_admin && empty($header_task_reminders)) ? 'logins' : 'tasks';
 ?>
 <!DOCTYPE html>
@@ -249,6 +258,13 @@ $default_header_notif_tab = ($is_admin && empty($header_task_reminders)) ? 'logi
                 <a href="../leadership/users.php?tab=students&student_status=pending" style="display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.85rem; background: #fffbeb; border-bottom: 1.5px solid #fde68a; text-decoration: none; color: #92400e; font-size: 0.8rem; font-weight: 700;">
                   <span><i class="fa-solid fa-clock" style="color: #d97706; margin-right: 4px;"></i> <?= $header_pending_students ?> Student Registration(s) Pending Approval</span>
                   <span style="background: #d97706; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem;">Review</span>
+                </a>
+              <?php endif; ?>
+
+              <?php if (!empty($header_pending_tickets)): ?>
+                <a href="../leadership/users.php?tab=tickets&ticket_status=pending" style="display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.85rem; background: #fff7ed; border-bottom: 1.5px solid #fed7aa; text-decoration: none; color: #9a3412; font-size: 0.8rem; font-weight: 700;">
+                  <span><i class="fa-solid fa-key" style="color: #ea580c; margin-right: 4px;"></i> <?= $header_pending_tickets ?> Password Reset Request(s) Pending</span>
+                  <span style="background: #ea580c; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem;">Manage</span>
                 </a>
               <?php endif; ?>
 
@@ -410,6 +426,7 @@ $default_header_notif_tab = ($is_admin && empty($header_task_reminders)) ? 'logi
                 <li><a href="../leadership/notifications.php" class="dropdown-item"><i class="fa-solid fa-bell"></i> All Notifications</a></li>
                 <li><a href="../leadership/reports.php" class="dropdown-item"><i class="fa-solid fa-chart-pie"></i> Performance Reports</a></li>
                 <li><a href="../student/index.php" class="dropdown-item"><i class="fa-solid fa-eye"></i> View Student Portal</a></li>
+                <li><button type="button" class="dropdown-item" onclick="openChangePasswordModal()"><i class="fa-solid fa-key" style="color: var(--primary);"></i> Change Password</button></li>
                 <li class="dropdown-divider"></li>
                 <li><a href="../leadership/logout.php" class="dropdown-item dropdown-logout"><i class="fa-solid fa-right-from-bracket"></i> Logout</a></li>
               </ul>
@@ -449,6 +466,7 @@ $default_header_notif_tab = ($is_admin && empty($header_task_reminders)) ? 'logi
                 <ul class="dropdown-menu-list">
                   <li><a href="../leadership/dashboard.php" class="dropdown-item"><i class="fa-solid fa-gauge-high"></i> Officer Dashboard</a></li>
                   <li><a href="../student/index.php" class="dropdown-item"><i class="fa-solid fa-graduation-cap"></i> Student Portal</a></li>
+                  <li><button type="button" class="dropdown-item" onclick="openChangePasswordModal()"><i class="fa-solid fa-key" style="color: var(--primary);"></i> Change Password</button></li>
                   <li class="dropdown-divider"></li>
                   <li><a href="../leadership/logout.php" class="dropdown-item dropdown-logout"><i class="fa-solid fa-right-from-bracket"></i> Logout</a></li>
                 </ul>
@@ -478,6 +496,7 @@ $default_header_notif_tab = ($is_admin && empty($header_task_reminders)) ? 'logi
                 <ul class="dropdown-menu-list">
                   <li><a href="../student/index.php" class="dropdown-item"><i class="fa-solid fa-graduation-cap"></i> Portal Overview</a></li>
                   <li><a href="../student/feedback.php" class="dropdown-item"><i class="fa-solid fa-comment-dots"></i> My Feedback</a></li>
+                  <li><button type="button" class="dropdown-item" onclick="openChangePasswordModal()"><i class="fa-solid fa-key" style="color: var(--primary);"></i> Change Password</button></li>
                   <li class="dropdown-divider"></li>
                   <li><a href="../student/logout.php" class="dropdown-item dropdown-logout"><i class="fa-solid fa-right-from-bracket"></i> Logout</a></li>
                 </ul>
@@ -499,5 +518,7 @@ $default_header_notif_tab = ($is_admin && empty($header_task_reminders)) ? 'logi
     </button>
   </div>
 </header>
+
+<?php include_once __DIR__ . '/change_password_modal.php'; ?>
 
 <main class="main-content">

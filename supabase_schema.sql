@@ -337,3 +337,25 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 SELECT setval('tasks_id_seq', (SELECT COALESCE(MAX(id), 1) FROM tasks));
+
+-- --------------------------------------------------------
+-- Table: password_reset_tickets (Student & Leadership Reset Requests)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS password_reset_tickets (
+    id SERIAL PRIMARY KEY,
+    account_type VARCHAR(20) NOT NULL DEFAULT 'Student',
+    account_id INT DEFAULT NULL,
+    identifier_submitted VARCHAR(150) NOT NULL,
+    user_name VARCHAR(150) NOT NULL,
+    user_email VARCHAR(150) DEFAULT NULL,
+    account_details VARCHAR(255) DEFAULT NULL,
+    request_reason TEXT DEFAULT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+    admin_notes TEXT DEFAULT NULL,
+    resolved_by INT DEFAULT NULL,
+    resolved_by_name VARCHAR(100) DEFAULT NULL,
+    resolved_at TIMESTAMP DEFAULT NULL,
+    new_temp_password VARCHAR(100) DEFAULT NULL,
+    ip_address VARCHAR(60) DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

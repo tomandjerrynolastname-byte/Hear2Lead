@@ -20,8 +20,9 @@ for ($i = 0; $i < $captcha_length; $i++) {
     $captcha_code .= $allowed_chars[random_int(0, $max_idx)];
 }
 
-// Store in session for server-side verification
+// Store in session for server-side verification (both registration and forgot-password)
 $_SESSION['student_reg_captcha'] = $captcha_code;
+$_SESSION['captcha_code'] = $captcha_code;
 
 // Image dimensions
 $width = 160;

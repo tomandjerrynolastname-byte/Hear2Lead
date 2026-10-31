@@ -243,3 +243,26 @@ CREATE TABLE IF NOT EXISTS `feedback_logs` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`feedback_id`) REFERENCES `feedbacks`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- --------------------------------------------------------
+-- Table: password_reset_tickets (Student & Leadership Reset Requests)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS password_reset_tickets (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  ccount_type VARCHAR(20) NOT NULL DEFAULT 'Student',
+  ccount_id INT DEFAULT NULL,
+  identifier_submitted VARCHAR(150) NOT NULL,
+  user_name VARCHAR(150) NOT NULL,
+  user_email VARCHAR(150) DEFAULT NULL,
+  ccount_details VARCHAR(255) DEFAULT NULL,
+  equest_reason TEXT DEFAULT NULL,
+  status ENUM('Pending', 'Resolved', 'Rejected') NOT NULL DEFAULT 'Pending',
+  dmin_notes TEXT DEFAULT NULL,
+  esolved_by INT DEFAULT NULL,
+  esolved_by_name VARCHAR(100) DEFAULT NULL,
+  esolved_at DATETIME DEFAULT NULL,
+  
+ew_temp_password VARCHAR(100) DEFAULT NULL,
+  ip_address VARCHAR(60) DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

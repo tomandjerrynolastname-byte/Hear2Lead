@@ -27,6 +27,8 @@ if ($req_tab === 'students') {
     $active_tab = 'students';
 } elseif ($req_tab === 'roles' && $is_admin) {
     $active_tab = 'roles';
+} elseif ($req_tab === 'tickets' && $is_admin) {
+    $active_tab = 'tickets';
 } else {
     $active_tab = 'leaders';
 }
@@ -449,6 +451,92 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
+
+    // ==========================================
+    // 4. PASSWORD RESET TICKET ACTIONS (ADMIN ONLY)
+    // ==========================================
+    if (in_array($action, ['resolve_reset_ticket', 'reject_reset_ticket', 'delete_reset_ticket'], true)) {
+        $active_tab = 'tickets';
+        if (!$is_admin) {
+            $error_msg = "Permission denied: Only Administrators can view and process password reset tickets.";
+        } elseif ($action === 'resolve_reset_ticket') {
+            $ticket_id = intval($_POST['ticket_id'] ?? 0);
+            $new_password = trim($_POST['new_password'] ?? '');
+            $admin_notes = trim($_POST['admin_notes'] ?? '');
+
+            $t_stmt = $pdo->prepare("SELECT * FROM password_reset_tickets WHERE id = ?");
+            $t_stmt->execute([$ticket_id]);
+            $ticket = $t_stmt->fetch();
+
+            if (!$ticket) {
+                $error_msg = "Password reset ticket #$ticket_id was not found.";
+            } elseif (empty($new_password)) {
+                $error_msg = "Please specify the new password to reset for this user.";
+            } elseif (strlen($new_password) < 6) {
+                $error_msg = "The new password must be at least 6 characters in length.";
+            } else {
+                $acc_type = $ticket['account_type'];
+                $acc_id = intval($ticket['account_id']);
+                $hash = password_hash($new_password, PASSWORD_BCRYPT);
+                $updated_acc = false;
+
+                if (strcasecmp($acc_type, 'Student') === 0) {
+                    $st_up = $pdo->prepare("UPDATE students SET password = ? WHERE id = ?");
+                    if ($st_up->execute([$hash, $acc_id])) {
+                        $updated_acc = true;
+                        if (function_exists('recordStudentAccountLog')) {
+                            recordStudentAccountLog($acc_id, $ticket['identifier_submitted'], $ticket['user_name'], $current_user_id, $current_user_name, $current_role, 'Password Reset', null, 'Approved', "Password reset by Admin via Ticket #$ticket_id", $pdo);
+                        }
+                    }
+                } else {
+                    $u_up = $pdo->prepare("UPDATE users SET password = ? WHERE id = ?");
+                    if ($u_up->execute([$hash, $acc_id])) {
+                        $updated_acc = true;
+                    }
+                }
+
+                if ($updated_acc) {
+                    $up_t = $pdo->prepare("UPDATE password_reset_tickets SET 
+                        status = 'Resolved',
+                        admin_notes = ?,
+                        resolved_by = ?,
+                        resolved_by_name = ?,
+                        resolved_at = NOW(),
+                        new_temp_password = ?
+                        WHERE id = ?");
+                    $up_t->execute([$admin_notes, $current_user_id, $current_user_name, $new_password, $ticket_id]);
+
+                    $success_msg = "Ticket #$ticket_id resolved! Password for {$ticket['user_name']} was successfully reset to: '$new_password'";
+                } else {
+                    $error_msg = "Failed to update user account password. Please verify the account exists.";
+                }
+            }
+        } elseif ($action === 'reject_reset_ticket') {
+            $ticket_id = intval($_POST['ticket_id'] ?? 0);
+            $admin_notes = trim($_POST['admin_notes'] ?? 'Request rejected by administrator');
+
+            $up_t = $pdo->prepare("UPDATE password_reset_tickets SET 
+                status = 'Rejected',
+                admin_notes = ?,
+                resolved_by = ?,
+                resolved_by_name = ?,
+                resolved_at = NOW()
+                WHERE id = ?");
+            if ($up_t->execute([$admin_notes, $current_user_id, $current_user_name, $ticket_id])) {
+                $success_msg = "Ticket #$ticket_id has been rejected.";
+            } else {
+                $error_msg = "Failed to update ticket status.";
+            }
+        } elseif ($action === 'delete_reset_ticket') {
+            $ticket_id = intval($_POST['ticket_id'] ?? 0);
+            $del = $pdo->prepare("DELETE FROM password_reset_tickets WHERE id = ?");
+            if ($del->execute([$ticket_id])) {
+                $success_msg = "Ticket #$ticket_id has been deleted.";
+            } else {
+                $error_msg = "Failed to delete ticket.";
+            }
+        }
+    }
 }
 
 // ----------------------------------------------------
@@ -570,6 +658,48 @@ try {
 }
 $role_count = count($role_library);
 
+// 4. Password Reset Tickets Scoping & Query (Admin Only)
+$reset_tickets = [];
+$total_ticket_count = 0;
+$pending_ticket_count = 0;
+$resolved_ticket_count = 0;
+$rejected_ticket_count = 0;
+$filter_ticket_status = $_GET['ticket_status'] ?? 'all';
+$search_tickets = trim($_GET['q_tickets'] ?? '');
+
+if ($is_admin) {
+    $ticket_where = ["1=1"];
+    $ticket_params = [];
+
+    if ($filter_ticket_status === 'pending') {
+        $ticket_where[] = "status = 'Pending'";
+    } elseif ($filter_ticket_status === 'resolved') {
+        $ticket_where[] = "status = 'Resolved'";
+    } elseif ($filter_ticket_status === 'rejected') {
+        $ticket_where[] = "status = 'Rejected'";
+    }
+
+    if (!empty($search_tickets)) {
+        $ticket_where[] = "(id = ? OR identifier_submitted LIKE ? OR user_name LIKE ? OR user_email LIKE ? OR account_details LIKE ?)";
+        $ticket_params[] = intval($search_tickets);
+        $ticket_params[] = "%$search_tickets%";
+        $ticket_params[] = "%$search_tickets%";
+        $ticket_params[] = "%$search_tickets%";
+        $ticket_params[] = "%$search_tickets%";
+    }
+
+    $ticket_where_sql = implode(" AND ", $ticket_where);
+    $sql_tickets = "SELECT * FROM password_reset_tickets WHERE $ticket_where_sql ORDER BY CASE status WHEN 'Pending' THEN 1 WHEN 'Resolved' THEN 2 ELSE 3 END ASC, created_at DESC";
+    $stmt_tickets = $pdo->prepare($sql_tickets);
+    $stmt_tickets->execute($ticket_params);
+    $reset_tickets = $stmt_tickets->fetchAll();
+
+    $total_ticket_count = intval($pdo->query("SELECT COUNT(*) FROM password_reset_tickets")->fetchColumn());
+    $pending_ticket_count = intval($pdo->query("SELECT COUNT(*) FROM password_reset_tickets WHERE status = 'Pending'")->fetchColumn());
+    $resolved_ticket_count = intval($pdo->query("SELECT COUNT(*) FROM password_reset_tickets WHERE status = 'Resolved'")->fetchColumn());
+    $rejected_ticket_count = intval($pdo->query("SELECT COUNT(*) FROM password_reset_tickets WHERE status = 'Rejected'")->fetchColumn());
+}
+
 include_once __DIR__ . '/../includes/header.php';
 ?>
 
@@ -647,6 +777,16 @@ include_once __DIR__ . '/../includes/header.php';
       <i class="fa-solid fa-id-badge"></i>
       <span>Role Library & Accessibility</span>
       <span class="user-tab-badge"><?= $role_count ?></span>
+    </button>
+    <button type="button" class="user-tab-btn <?= $active_tab === 'tickets' ? 'active' : '' ?>" id="tab-btn-tickets" onclick="switchUserTab('tickets')" style="<?= $pending_ticket_count > 0 ? 'border-color: #ea580c;' : '' ?>">
+      <i class="fa-solid fa-ticket" style="<?= $pending_ticket_count > 0 ? 'color: #ea580c;' : '' ?>"></i>
+      <span>Password Reset Tickets</span>
+      <span class="user-tab-badge"><?= $total_ticket_count ?></span>
+      <?php if (!empty($pending_ticket_count)): ?>
+        <span class="badge" style="background: #ea580c; color: #ffffff; font-size: 0.7rem; padding: 2px 7px; border-radius: 12px; margin-left: 4px; font-weight: 800; display: inline-flex; align-items: center; gap: 3px;" title="<?= $pending_ticket_count ?> password reset ticket(s) pending admin review">
+          <i class="fa-solid fa-clock"></i> <?= $pending_ticket_count ?> Pending
+        </span>
+      <?php endif; ?>
     </button>
   <?php endif; ?>
 </div>
@@ -1083,6 +1223,189 @@ include_once __DIR__ . '/../includes/header.php';
             </td>
           </tr>
         <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+</div>
+<?php endif; ?>
+
+<?php if ($is_admin): ?>
+<!-- ======================================================== -->
+<!-- TAB 4: PASSWORD RESET TICKETS PANE (ADMIN ONLY)          -->
+<!-- ======================================================== -->
+<div class="user-tab-pane <?= $active_tab === 'tickets' ? 'active' : '' ?>" id="tab-tickets">
+
+  <!-- Status Filter & Search Bar -->
+  <div class="filter-bar" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+    <!-- Status Quick Pills -->
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+      <a href="users.php?tab=tickets&ticket_status=all<?= !empty($search_tickets) ? '&q_tickets=' . urlencode($search_tickets) : '' ?>" class="btn btn-sm <?= $filter_ticket_status === 'all' ? 'btn-primary' : 'btn-secondary' ?>" style="font-size: 0.8rem; padding: 0.35rem 0.75rem;">
+        All (<?= $total_ticket_count ?>)
+      </a>
+      <a href="users.php?tab=tickets&ticket_status=pending<?= !empty($search_tickets) ? '&q_tickets=' . urlencode($search_tickets) : '' ?>" class="btn btn-sm <?= $filter_ticket_status === 'pending' ? 'btn-warning' : 'btn-secondary' ?>" style="font-size: 0.8rem; padding: 0.35rem 0.75rem; <?= $pending_ticket_count > 0 && $filter_ticket_status !== 'pending' ? 'border-color: #ea580c; color: #c2410c; background: #fff7ed;' : '' ?>">
+        <i class="fa-solid fa-clock"></i> Pending (<?= $pending_ticket_count ?>)
+      </a>
+      <a href="users.php?tab=tickets&ticket_status=resolved<?= !empty($search_tickets) ? '&q_tickets=' . urlencode($search_tickets) : '' ?>" class="btn btn-sm <?= $filter_ticket_status === 'resolved' ? 'btn-success' : 'btn-secondary' ?>" style="font-size: 0.8rem; padding: 0.35rem 0.75rem;">
+        <i class="fa-solid fa-circle-check"></i> Resolved (<?= $resolved_ticket_count ?>)
+      </a>
+      <a href="users.php?tab=tickets&ticket_status=rejected<?= !empty($search_tickets) ? '&q_tickets=' . urlencode($search_tickets) : '' ?>" class="btn btn-sm <?= $filter_ticket_status === 'rejected' ? 'btn-danger' : 'btn-secondary' ?>" style="font-size: 0.8rem; padding: 0.35rem 0.75rem;">
+        <i class="fa-solid fa-circle-xmark"></i> Rejected (<?= $rejected_ticket_count ?>)
+      </a>
+    </div>
+
+    <!-- Search Form -->
+    <form method="GET" action="users.php" style="display: flex; gap: 0.5rem; align-items: center; flex: 1; max-width: 420px;">
+      <input type="hidden" name="tab" value="tickets">
+      <input type="hidden" name="ticket_status" value="<?= htmlspecialchars($filter_ticket_status) ?>">
+      <div style="flex: 1; position: relative;">
+        <input type="text" name="q_tickets" class="form-control" placeholder="Search by Ticket #, Name, LRN/User, Email..." value="<?= htmlspecialchars($search_tickets) ?>" style="padding-left: 2.2rem; font-size: 0.85rem;">
+        <i class="fa-solid fa-magnifying-glass" style="position: absolute; left: 0.8rem; top: 50%; transform: translateY(-50%); color: var(--gray-400);"></i>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Search</button>
+      <?php if (!empty($search_tickets) || $filter_ticket_status !== 'all'): ?>
+        <a href="users.php?tab=tickets" class="btn btn-secondary btn-sm" title="Reset filter"><i class="fa-solid fa-rotate-left"></i></a>
+      <?php endif; ?>
+    </form>
+  </div>
+
+  <!-- Tickets Table -->
+  <div class="table-container">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width: 100px;">Ticket #</th>
+          <th style="width: 120px;">Portal Type</th>
+          <th>Requester & Details</th>
+          <th>Submitted Identifier</th>
+          <th>Reason / Notes</th>
+          <th style="width: 120px;">Status</th>
+          <th>Resolution Details</th>
+          <th style="text-align: right; width: 170px;">Admin Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php if (empty($reset_tickets)): ?>
+          <tr>
+            <td colspan="8" style="text-align: center; padding: 2.5rem 1rem; color: var(--gray-500);">
+              <i class="fa-solid fa-ticket-simple" style="font-size: 2.2rem; margin-bottom: 0.75rem; color: var(--gray-400); display: block;"></i>
+              <strong style="font-size: 1rem; color: var(--dark);">No password reset tickets found</strong>
+              <p style="margin: 0.35rem 0 0; font-size: 0.85rem;">
+                <?= !empty($search_tickets) || $filter_ticket_status !== 'all' ? 'Try adjusting your search or status filter.' : 'When students or officers request a password reset, tickets will appear here for administrator review.' ?>
+              </p>
+            </td>
+          </tr>
+        <?php else: ?>
+          <?php foreach ($reset_tickets as $tk):
+            $is_stu = (strcasecmp($tk['account_type'], 'Student') === 0);
+            $tk_status = $tk['status'];
+            $status_badge = 'badge-planning';
+            if ($tk_status === 'Pending') $status_badge = 'badge-overdue';
+            elseif ($tk_status === 'Resolved') $status_badge = 'badge-completed';
+            elseif ($tk_status === 'Rejected') $status_badge = 'badge-danger';
+          ?>
+            <tr style="<?= $tk_status === 'Pending' ? 'background: #fffbeb;' : '' ?>">
+              <td>
+                <strong style="color: var(--primary); font-family: monospace; font-size: 0.95rem;">#<?= intval($tk['id']) ?></strong>
+                <div style="font-size: 0.72rem; color: var(--gray-500); margin-top: 2px;">
+                  <?= date('M d, Y', strtotime($tk['created_at'])) ?><br>
+                  <span style="color: var(--gray-400);"><?= date('g:i A', strtotime($tk['created_at'])) ?></span>
+                </div>
+              </td>
+              <td>
+                <span class="badge <?= $is_stu ? 'badge-planning' : 'badge-role-officer' ?>" style="display: inline-flex; align-items: center; gap: 4px;">
+                  <i class="fa-solid <?= $is_stu ? 'fa-graduation-cap' : 'fa-shield-halved' ?>"></i>
+                  <?= htmlspecialchars($tk['account_type']) ?>
+                </span>
+              </td>
+              <td>
+                <strong style="color: var(--dark); font-size: 0.9rem;"><?= htmlspecialchars($tk['user_name']) ?></strong>
+                <div style="font-size: 0.76rem; color: var(--gray-600); margin-top: 2px;">
+                  <i class="fa-solid fa-circle-info" style="font-size: 0.7rem; color: var(--primary);"></i>
+                  <?= htmlspecialchars($tk['account_details'] ?: 'N/A') ?>
+                </div>
+                <?php if (!empty($tk['user_email'])): ?>
+                  <div style="font-size: 0.74rem; color: var(--gray-500);">
+                    <i class="fa-regular fa-envelope"></i> <?= htmlspecialchars($tk['user_email']) ?>
+                  </div>
+                <?php endif; ?>
+              </td>
+              <td>
+                <code style="font-size: 0.82rem; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; border: 1px solid #e2e8f0; color: #0f172a;">
+                  <?= htmlspecialchars($tk['identifier_submitted']) ?>
+                </code>
+              </td>
+              <td>
+                <div style="font-size: 0.8rem; color: var(--gray-700); max-width: 200px; line-height: 1.35;">
+                  <?= htmlspecialchars($tk['request_reason'] ?: 'Forgot password') ?>
+                </div>
+              </td>
+              <td>
+                <span class="badge <?= $status_badge ?>" style="font-weight: 700;">
+                  <?php if ($tk_status === 'Pending'): ?>
+                    <i class="fa-solid fa-clock"></i> Pending
+                  <?php elseif ($tk_status === 'Resolved'): ?>
+                    <i class="fa-solid fa-circle-check"></i> Resolved
+                  <?php else: ?>
+                    <i class="fa-solid fa-circle-xmark"></i> Rejected
+                  <?php endif; ?>
+                </span>
+              </td>
+              <td>
+                <?php if ($tk_status === 'Resolved'): ?>
+                  <div style="font-size: 0.78rem; line-height: 1.35;">
+                    <span style="color: #15803d; font-weight: 700;"><i class="fa-solid fa-user-check"></i> <?= htmlspecialchars($tk['resolved_by_name'] ?: 'Admin') ?></span><br>
+                    <span style="color: var(--gray-500); font-size: 0.72rem;"><?= !empty($tk['resolved_at']) ? date('M d, Y • g:i A', strtotime($tk['resolved_at'])) : '' ?></span>
+                    <?php if (!empty($tk['new_temp_password'])): ?>
+                      <div style="margin-top: 3px;">
+                        <span style="font-size: 0.7rem; color: var(--gray-600);">New Pass:</span>
+                        <code style="background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; padding: 1px 5px; border-radius: 3px; font-weight: 800;"><?= htmlspecialchars($tk['new_temp_password']) ?></code>
+                      </div>
+                    <?php endif; ?>
+                    <?php if (!empty($tk['admin_notes'])): ?>
+                      <div style="font-size: 0.72rem; color: var(--gray-500); margin-top: 2px; font-style: italic;">
+                        "<?= htmlspecialchars($tk['admin_notes']) ?>"
+                      </div>
+                    <?php endif; ?>
+                  </div>
+                <?php elseif ($tk_status === 'Rejected'): ?>
+                  <div style="font-size: 0.78rem; color: #b91c1c;">
+                    <strong>Rejected by:</strong> <?= htmlspecialchars($tk['resolved_by_name'] ?: 'Admin') ?><br>
+                    <span style="font-size: 0.72rem; color: var(--gray-500);"><?= !empty($tk['resolved_at']) ? date('M d, Y', strtotime($tk['resolved_at'])) : '' ?></span>
+                    <?php if (!empty($tk['admin_notes'])): ?>
+                      <div style="font-size: 0.72rem; color: #b91c1c; margin-top: 2px;">
+                        "<?= htmlspecialchars($tk['admin_notes']) ?>"
+                      </div>
+                    <?php endif; ?>
+                  </div>
+                <?php else: ?>
+                  <span style="font-size: 0.75rem; color: #d97706; font-weight: 600;">
+                    <i class="fa-solid fa-hourglass-half"></i> Awaiting Administrator Reset
+                  </span>
+                <?php endif; ?>
+              </td>
+              <td style="text-align: right;">
+                <div style="display: flex; gap: 0.35rem; justify-content: flex-end; align-items: center;">
+                  <?php if ($tk_status === 'Pending'): ?>
+                    <button type="button" class="btn btn-primary btn-sm" onclick='openResolveTicketModal(<?= json_encode($tk, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>)' style="padding: 0.35rem 0.65rem; font-size: 0.78rem; background: #059669; border-color: #059669;" title="Reset password for this account">
+                      <i class="fa-solid fa-key"></i> Reset
+                    </button>
+                    <button type="button" class="btn btn-danger btn-sm" onclick='openRejectTicketModal(<?= json_encode($tk, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>)' style="padding: 0.35rem 0.55rem; font-size: 0.78rem;" title="Reject this reset request">
+                      <i class="fa-solid fa-xmark"></i>
+                    </button>
+                  <?php else: ?>
+                    <form method="POST" action="users.php" onsubmit="return confirm('Are you sure you want to permanently delete Ticket #<?= $tk['id'] ?>?');" style="display: inline;">
+                      <input type="hidden" name="action" value="delete_reset_ticket">
+                      <input type="hidden" name="ticket_id" value="<?= $tk['id'] ?>">
+                      <button type="submit" class="btn btn-secondary btn-sm" style="color: var(--danger); padding: 0.35rem 0.55rem; font-size: 0.78rem;" title="Delete Ticket Record">
+                        <i class="fa-solid fa-trash"></i>
+                      </button>
+                    </form>
+                  <?php endif; ?>
+                </div>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+        <?php endif; ?>
       </tbody>
     </table>
   </div>
@@ -1602,8 +1925,119 @@ include_once __DIR__ . '/../includes/header.php';
   </div>
 </div>
 
+<?php if ($is_admin): ?>
+<!-- ======================================================== -->
+<!-- MODAL: RESOLVE PASSWORD RESET TICKET (ADMIN ONLY)        -->
+<!-- ======================================================== -->
+<div class="modal-backdrop" id="resolveTicketModal">
+  <div class="modal-card" style="max-width: 480px;">
+    <div class="modal-header" style="background: linear-gradient(135deg, #065f46, #047857); color: white;">
+      <h3 style="font-size: 1.15rem; font-weight: 700; margin: 0; color: white;">
+        <i class="fa-solid fa-key" style="color: #a7f3d0;"></i> Reset Password for User
+      </h3>
+      <button class="close-btn" data-modal-close style="color: white;">&times;</button>
+    </div>
+
+    <form method="POST" action="users.php">
+      <input type="hidden" name="action" value="resolve_reset_ticket">
+      <input type="hidden" name="ticket_id" id="rtModalTicketId" value="0">
+
+      <div class="modal-body">
+        <!-- Target User Card -->
+        <div style="background: #f0fdf4; border: 1.5px solid #bbf7d0; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.3rem;">
+            <strong id="rtModalUserName" style="font-size: 0.95rem; color: #166534;">User Name</strong>
+            <span id="rtModalTicketBadge" class="badge badge-planning" style="font-family: monospace;">Ticket #0</span>
+          </div>
+          <div id="rtModalAccountDetails" style="font-size: 0.8rem; color: #15803d;">Account Details</div>
+          <div id="rtModalIdentifier" style="font-size: 0.76rem; color: #475569; margin-top: 3px;">Submitted: 2026-0001</div>
+        </div>
+
+        <!-- New Password Field -->
+        <div class="form-group" style="margin-bottom: 0.85rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+            <label class="form-label" style="font-weight: 700; margin: 0; font-size: 0.82rem;">New Password to Set <span style="color: red;">*</span></label>
+            <div style="display: flex; gap: 0.4rem;">
+              <button type="button" onclick="setPresetPassword('default')" style="background: #e0f2fe; border: 1px solid #bae6fd; color: #0369a1; border-radius: 4px; font-size: 0.7rem; font-weight: 700; padding: 2px 6px; cursor: pointer;">
+                Default Pass
+              </button>
+              <button type="button" onclick="setPresetPassword('generate')" style="background: #fef3c7; border: 1px solid #fde68a; color: #92400e; border-radius: 4px; font-size: 0.7rem; font-weight: 700; padding: 2px 6px; cursor: pointer;">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> Auto-Generate
+              </button>
+            </div>
+          </div>
+          <div style="position: relative;">
+            <input type="text" name="new_password" id="rtModalNewPass" class="form-control" placeholder="Enter or generate new password" required style="font-family: monospace; font-weight: 700; font-size: 0.95rem; padding-right: 2.2rem;">
+            <button type="button" onclick="copyModalPassword()" style="position: absolute; right: 0.65rem; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--gray-500); cursor: pointer; padding: 0;" title="Copy to clipboard">
+              <i class="fa-regular fa-copy"></i>
+            </button>
+          </div>
+          <small style="font-size: 0.72rem; color: var(--gray-500); display: block; margin-top: 3px;">
+            Copy this password to provide to the student or officer securely.
+          </small>
+        </div>
+
+        <!-- Admin Notes Field -->
+        <div class="form-group" style="margin-bottom: 0.5rem;">
+          <label class="form-label" style="font-weight: 600; font-size: 0.82rem; margin-bottom: 0.35rem; display: block;">
+            Admin Resolution Notes <span style="font-weight: normal; color: var(--gray-500);">(Optional)</span>
+          </label>
+          <textarea name="admin_notes" id="rtModalAdminNotes" class="form-control" rows="2" placeholder="e.g. Identity verified. Password reset and communicated in person." style="font-size: 0.82rem; resize: vertical;"></textarea>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="padding: 0.85rem 1.25rem; background: var(--gray-50); border-top: 1px solid var(--gray-200); display: flex; justify-content: flex-end; gap: 0.5rem;">
+        <button type="button" class="btn btn-secondary" data-modal-close style="font-size: 0.85rem;">Cancel</button>
+        <button type="submit" class="btn btn-primary" style="background: #059669; border-color: #059669; font-weight: 700; font-size: 0.85rem;">
+          <i class="fa-solid fa-check"></i> Reset Password & Resolve Ticket
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ======================================================== -->
+<!-- MODAL: REJECT PASSWORD RESET TICKET                      -->
+<!-- ======================================================== -->
+<div class="modal-backdrop" id="rejectTicketModal">
+  <div class="modal-card" style="max-width: 440px;">
+    <div class="modal-header" style="background: linear-gradient(135deg, #991b1b, #b91c1c); color: white;">
+      <h3 style="font-size: 1.15rem; font-weight: 700; margin: 0; color: white;">
+        <i class="fa-solid fa-ban"></i> Reject Reset Request
+      </h3>
+      <button class="close-btn" data-modal-close style="color: white;">&times;</button>
+    </div>
+
+    <form method="POST" action="users.php">
+      <input type="hidden" name="action" value="reject_reset_ticket">
+      <input type="hidden" name="ticket_id" id="rejectModalTicketId" value="0">
+
+      <div class="modal-body">
+        <p style="font-size: 0.88rem; color: var(--dark); margin-top: 0;">
+          Are you sure you want to reject the password reset ticket for <strong id="rejectModalUserName">User</strong>?
+        </p>
+
+        <div class="form-group" style="margin-bottom: 0.5rem;">
+          <label class="form-label" style="font-weight: 600; font-size: 0.82rem; margin-bottom: 0.35rem; display: block;">
+            Rejection Reason / Notes <span style="color: red;">*</span>
+          </label>
+          <textarea name="admin_notes" id="rejectModalNotes" class="form-control" rows="3" placeholder="e.g. Identity could not be verified / Account is not active." required style="font-size: 0.85rem; resize: vertical;"></textarea>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="padding: 0.85rem 1.25rem; background: var(--gray-50); border-top: 1px solid var(--gray-200); display: flex; justify-content: flex-end; gap: 0.5rem;">
+        <button type="button" class="btn btn-secondary" data-modal-close style="font-size: 0.85rem;">Cancel</button>
+        <button type="submit" class="btn btn-danger" style="font-weight: 700; font-size: 0.85rem;">
+          <i class="fa-solid fa-xmark"></i> Reject Ticket
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+<?php endif; ?>
+
 <script>
-// Switch between Leaders, Students, and Role Library tabs
+// Switch between Leaders, Students, Role Library, and Password Reset Tickets tabs
 function switchUserTab(tabName) {
   var btns = document.querySelectorAll('.user-tab-btn');
   var panes = document.querySelectorAll('.user-tab-pane');
@@ -1623,6 +2057,12 @@ function switchUserTab(tabName) {
     var rlPane = document.getElementById('tab-roles');
     if (rlPane) rlPane.classList.add('active');
     history.replaceState(null, '', 'users.php?tab=roles');
+  } else if (tabName === 'tickets') {
+    var btnTk = document.getElementById('tab-btn-tickets');
+    if (btnTk) btnTk.classList.add('active');
+    var tkPane = document.getElementById('tab-tickets');
+    if (tkPane) tkPane.classList.add('active');
+    history.replaceState(null, '', 'users.php?tab=tickets');
   } else {
     var btnLd = document.getElementById('tab-btn-leaders');
     if (btnLd) btnLd.classList.add('active');
@@ -1877,6 +2317,70 @@ function openStudentLogsModal(studentId) {
   document.body.style.overflow = 'hidden';
 }
 
+// Open Resolve Ticket Modal
+var currentActiveTicket = null;
+function openResolveTicketModal(ticket) {
+  currentActiveTicket = ticket;
+  document.getElementById('rtModalTicketId').value = ticket.id;
+  document.getElementById('rtModalTicketBadge').textContent = 'Ticket #' + ticket.id;
+  document.getElementById('rtModalUserName').textContent = ticket.user_name;
+  document.getElementById('rtModalAccountDetails').textContent = ticket.account_type + ' • ' + (ticket.account_details || '');
+  document.getElementById('rtModalIdentifier').textContent = 'Submitted: ' + ticket.identifier_submitted;
+  document.getElementById('rtModalAdminNotes').value = '';
+
+  setPresetPassword('default');
+  document.getElementById('resolveTicketModal').classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+
+function setPresetPassword(mode) {
+  var passInput = document.getElementById('rtModalNewPass');
+  if (!passInput) return;
+  if (mode === 'default') {
+    if (currentActiveTicket && currentActiveTicket.account_type && currentActiveTicket.account_type.toLowerCase() === 'student') {
+      passInput.value = 'student123';
+    } else {
+      passInput.value = 'admin123';
+    }
+  } else if (mode === 'generate') {
+    var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+    var gen = 'H2L@';
+    for (var i = 0; i < 6; i++) {
+      gen += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    passInput.value = gen;
+  }
+}
+
+function copyModalPassword() {
+  var passInput = document.getElementById('rtModalNewPass');
+  if (passInput && passInput.value) {
+    navigator.clipboard.writeText(passInput.value).then(function() {
+      if (typeof Swal !== 'undefined') {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'success',
+          title: 'Password copied to clipboard!',
+          showConfirmButton: false,
+          timer: 1500
+        });
+      } else {
+        alert('Password copied: ' + passInput.value);
+      }
+    });
+  }
+}
+
+// Open Reject Ticket Modal
+function openRejectTicketModal(ticket) {
+  document.getElementById('rejectModalTicketId').value = ticket.id;
+  document.getElementById('rejectModalUserName').textContent = ticket.user_name + ' (Ticket #' + ticket.id + ')';
+  document.getElementById('rejectModalNotes').value = '';
+  document.getElementById('rejectTicketModal').classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+
 // Sync active tab on initial load if hash is set
 document.addEventListener('DOMContentLoaded', function() {
   var hash = window.location.hash;
@@ -1884,6 +2388,8 @@ document.addEventListener('DOMContentLoaded', function() {
     switchUserTab('students');
   } else if (hash === '#tab-roles') {
     switchUserTab('roles');
+  } else if (hash === '#tab-tickets') {
+    switchUserTab('tickets');
   } else if (hash === '#tab-leaders') {
     switchUserTab('leaders');
   }

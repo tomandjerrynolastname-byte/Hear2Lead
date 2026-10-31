@@ -347,6 +347,25 @@ function getDBConnection() {
                     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+                $pdo->exec("CREATE TABLE IF NOT EXISTS `password_reset_tickets` (
+                    `id` INT AUTO_INCREMENT PRIMARY KEY,
+                    `account_type` VARCHAR(20) NOT NULL DEFAULT 'Student',
+                    `account_id` INT DEFAULT NULL,
+                    `identifier_submitted` VARCHAR(150) NOT NULL,
+                    `user_name` VARCHAR(150) NOT NULL,
+                    `user_email` VARCHAR(150) DEFAULT NULL,
+                    `account_details` VARCHAR(255) DEFAULT NULL,
+                    `request_reason` TEXT DEFAULT NULL,
+                    `status` ENUM('Pending', 'Resolved', 'Rejected') NOT NULL DEFAULT 'Pending',
+                    `admin_notes` TEXT DEFAULT NULL,
+                    `resolved_by` INT DEFAULT NULL,
+                    `resolved_by_name` VARCHAR(100) DEFAULT NULL,
+                    `resolved_at` DATETIME DEFAULT NULL,
+                    `new_temp_password` VARCHAR(100) DEFAULT NULL,
+                    `ip_address` VARCHAR(60) DEFAULT NULL,
+                    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
             } catch (PDOException $e) {
                 die("<div style='padding: 20px; font-family: sans-serif; background: #fee2e2; border: 1px solid #f87171; color: #991b1b; border-radius: 8px; margin: 20px;'>
                     <h3>Database Connection Error</h3>
@@ -402,6 +421,21 @@ function recordStudentAccountLog(?int $studentId, string $studentLrn, string $st
         $stmt->execute([$studentId, $studentLrn, $studentName, $userId, $userName, $userRole, $actionType, $previousStatus, $newStatus, $logDetails]);
     } catch (PDOException $e) {
         // Fail silently if table is not ready
+    }
+}
+
+/**
+ * Get count of pending password reset tickets (Admin only)
+ */
+function getPendingResetTicketsCount(?PDO $pdo = null): int {
+    if ($pdo === null) {
+        $pdo = getDBConnection();
+    }
+    try {
+        $stmt = $pdo->query("SELECT COUNT(*) FROM password_reset_tickets WHERE status = 'Pending'");
+        return intval($stmt->fetchColumn());
+    } catch (Throwable $e) {
+        return 0;
     }
 }
 

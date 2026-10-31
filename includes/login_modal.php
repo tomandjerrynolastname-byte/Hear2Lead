@@ -73,7 +73,10 @@ $base_path = $is_subfolder ? '../' : './';
           </div>
 
           <div class="form-group" style="margin-bottom: 1.25rem;">
-            <label class="form-label" style="font-weight: 600; font-size: 0.85rem;">Password</label>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+              <label class="form-label" style="font-weight: 600; font-size: 0.85rem; margin: 0;">Password</label>
+              <button type="button" onclick="switchAuthTab('forgot', 'student')" style="background: none; border: none; color: var(--primary, #641914); font-size: 0.78rem; font-weight: 700; cursor: pointer; text-decoration: underline; padding: 0;">Forgot Password?</button>
+            </div>
             <div style="position: relative;">
               <input type="password" name="password" id="studentLoginPassword" class="form-control" placeholder="Enter password" required style="padding-left: 2.3rem; padding-right: 2.4rem;">
               <i class="fa-solid fa-lock" style="position: absolute; left: 0.85rem; top: 50%; transform: translateY(-50%); color: var(--gray-400);"></i>
@@ -113,7 +116,10 @@ $base_path = $is_subfolder ? '../' : './';
           </div>
 
           <div class="form-group" style="margin-bottom: 1.25rem;">
-            <label class="form-label" style="font-weight: 600; font-size: 0.85rem;">Password</label>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+              <label class="form-label" style="font-weight: 600; font-size: 0.85rem; margin: 0;">Password</label>
+              <button type="button" onclick="switchAuthTab('forgot', 'officer')" style="background: none; border: none; color: var(--primary, #641914); font-size: 0.78rem; font-weight: 700; cursor: pointer; text-decoration: underline; padding: 0;">Forgot Password?</button>
+            </div>
             <div style="position: relative;">
               <input type="password" name="password" id="officerLoginPassword" class="form-control" placeholder="Enter password" required style="padding-left: 2.3rem; padding-right: 2.4rem;">
               <i class="fa-solid fa-lock" style="position: absolute; left: 0.85rem; top: 50%; transform: translateY(-50%); color: var(--gray-400);"></i>
@@ -271,6 +277,96 @@ $base_path = $is_subfolder ? '../' : './';
         <div style="text-align: center; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--gray-200); font-size: 0.85rem; color: var(--gray-600);">
           <span>Already have an account?</span>
           <button type="button" onclick="switchAuthTab('student')" style="background: none; border: none; color: var(--primary, #641914); font-weight: 700; cursor: pointer; text-decoration: underline; margin-left: 0.25rem;">Back to Sign In</button>
+        </div>
+      </div>
+
+      <!-- 4. FORGOT PASSWORD TAB -->
+      <div id="tabContentForgot" style="display: none;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem;">
+          <h4 style="font-size: 1.05rem; font-weight: 700; color: var(--dark); margin: 0;">
+            <i class="fa-solid fa-key" style="color: var(--primary, #641914);"></i> Forgot Password Request
+          </h4>
+          <span style="font-size: 0.75rem; color: var(--gray-500);"><span style="color: red;">*</span> Required</span>
+        </div>
+
+        <!-- Info Notice -->
+        <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 0.65rem 0.85rem; font-size: 0.78rem; color: #1e40af; margin-bottom: 1rem; display: flex; align-items: flex-start; gap: 0.6rem;">
+          <i class="fa-solid fa-circle-info" style="color: #3b82f6; font-size: 1rem; margin-top: 2px;"></i>
+          <div>
+            <strong style="color: #1e3a8a;">Admin Password Reset Ticket:</strong>
+            <p style="margin: 0.15rem 0 0; line-height: 1.35;">
+              Submit your account details below. A secure reset ticket will be generated for the <strong>System Administrator</strong> to review and reset your password.
+            </p>
+          </div>
+        </div>
+
+        <!-- Account Type Selector (Student vs Leadership) -->
+        <div style="margin-bottom: 1rem;">
+          <label class="form-label" style="font-weight: 700; font-size: 0.8rem; margin-bottom: 0.4rem; display: block;">Select Account Type <span style="color: red;">*</span></label>
+          <div style="display: flex; background: #f1f5f9; padding: 4px; border-radius: 8px; gap: 4px;">
+            <button type="button" id="forgotTypeStudentBtn" onclick="setForgotAccountType('student')" style="flex: 1; padding: 0.45rem 0.6rem; font-size: 0.82rem; font-weight: 700; border: none; border-radius: 6px; cursor: pointer; transition: 0.2s; background: #ffffff; color: var(--primary, #641914); box-shadow: 0 1px 4px rgba(0,0,0,0.12);">
+              <i class="fa-solid fa-graduation-cap"></i> Student
+            </button>
+            <button type="button" id="forgotTypeOfficerBtn" onclick="setForgotAccountType('leadership')" style="flex: 1; padding: 0.45rem 0.6rem; font-size: 0.82rem; font-weight: 700; border: none; border-radius: 6px; cursor: pointer; transition: 0.2s; background: transparent; color: var(--gray-600, #475569);">
+              <i class="fa-solid fa-shield-halved"></i> Officer / Leader
+            </button>
+          </div>
+        </div>
+
+        <form method="POST" action="<?= $base_path ?>includes/forgot_password_handler.php" id="forgotPasswordForm" onsubmit="return handleForgotPassSubmit(event)">
+          <input type="hidden" name="from_modal" value="1">
+          <input type="hidden" name="account_type" id="forgotAccountTypeInput" value="student">
+          <input type="hidden" name="redirect_url" value="<?= htmlspecialchars($_SERVER['REQUEST_URI']) ?>">
+
+          <div class="form-group" style="margin-bottom: 0.85rem;">
+            <label class="form-label" id="forgotIdentifierLabel" style="font-weight: 600; font-size: 0.82rem; margin-bottom: 0.35rem; display: block;">
+              Student LRN / ID or Registered Email <span style="color: red;">*</span>
+            </label>
+            <div style="position: relative;">
+              <input type="text" name="identifier" id="forgotIdentifierInput" class="form-control" placeholder="e.g. 2026-0001 or student@school.ph" required style="padding-left: 2.2rem; font-size: 0.88rem;">
+              <i id="forgotIdentifierIcon" class="fa-solid fa-id-card" style="position: absolute; left: 0.8rem; top: 50%; transform: translateY(-50%); color: var(--gray-400); font-size: 0.85rem;"></i>
+            </div>
+            <small id="forgotIdentifierHelp" style="font-size: 0.72rem; color: var(--gray-500); margin-top: 0.25rem; display: block;">
+              Enter the exact LRN or email you registered with your student account.
+            </small>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 0.85rem;">
+            <label class="form-label" style="font-weight: 600; font-size: 0.82rem; margin-bottom: 0.35rem; display: block;">
+              Reason / Additional Note <span style="font-weight: normal; color: var(--gray-500);">(Optional)</span>
+            </label>
+            <textarea name="reason" id="forgotReasonInput" class="form-control" rows="2" placeholder="e.g. Forgot password, please reset my account password." style="font-size: 0.85rem; resize: vertical;"></textarea>
+          </div>
+
+          <!-- CAPTCHA Verification -->
+          <div class="form-group" style="margin-bottom: 1rem; background: #fafafa; border: 1px solid #e5e7eb; border-radius: 8px; padding: 0.65rem 0.85rem;">
+            <label class="form-label" style="font-weight: 700; font-size: 0.78rem; display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem;">
+              <span><i class="fa-solid fa-robot" style="color: var(--primary, #641914);"></i> Security CAPTCHA <span style="color: red;">*</span></span>
+              <span style="font-size: 0.7rem; font-weight: normal; color: var(--gray-500);">Case-insensitive</span>
+            </label>
+
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <div style="position: relative; flex-shrink: 0;">
+                <img id="forgotCaptchaImg" src="<?= $base_path ?>includes/captcha.php?t=<?= time() ?>" alt="Security CAPTCHA" style="height: 42px; width: 140px; border-radius: 6px; border: 1.5px solid #d97706; background: #fbf3de; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: block; object-fit: contain; cursor: pointer;" onclick="refreshForgotCaptcha()" title="Click image to refresh CAPTCHA">
+              </div>
+              <button type="button" onclick="refreshForgotCaptcha()" class="btn btn-secondary" style="padding: 0.5rem 0.65rem; height: 42px; border-radius: 6px; flex-shrink: 0;" title="Get new CAPTCHA code">
+                <i class="fa-solid fa-arrows-rotate" id="forgotCaptchaReloadIcon"></i>
+              </button>
+              <div style="flex: 1;">
+                <input type="text" name="captcha" id="forgotCaptchaInput" class="form-control" placeholder="Code" required maxlength="6" autocomplete="off" style="text-transform: uppercase; font-weight: 800; font-family: monospace; letter-spacing: 2px; font-size: 0.95rem; height: 42px;">
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" id="btnSubmitForgotTicket" class="btn btn-primary" style="width: 100%; padding: 0.75rem; font-weight: 700; background: var(--primary, #641914); border: none; font-size: 0.92rem; box-shadow: 0 4px 12px rgba(100, 25, 20, 0.25); display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+            <i class="fa-solid fa-paper-plane"></i> Submit Password Reset Ticket
+          </button>
+        </form>
+
+        <div style="text-align: center; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--gray-200); font-size: 0.85rem; color: var(--gray-600); display: flex; justify-content: center; gap: 1rem;">
+          <button type="button" onclick="switchAuthTab('student')" style="background: none; border: none; color: var(--primary, #641914); font-weight: 700; cursor: pointer; text-decoration: underline;">Back to Student Login</button>
+          <span>•</span>
+          <button type="button" onclick="switchAuthTab('officer')" style="background: none; border: none; color: var(--primary, #641914); font-weight: 700; cursor: pointer; text-decoration: underline;">Back to Officer Login</button>
         </div>
       </div>
 
@@ -451,12 +547,13 @@ function handleRegisterSubmit(e) {
 }
 
 // Switch between modal tabs
-function switchAuthTab(tab) {
+function switchAuthTab(tab, subType = 'student') {
   const btnStudent = document.getElementById('tabBtnStudent');
   const btnOfficer = document.getElementById('tabBtnOfficer');
   const contentStudent = document.getElementById('tabContentStudent');
   const contentOfficer = document.getElementById('tabContentOfficer');
   const contentRegister = document.getElementById('tabContentRegister');
+  const contentForgot = document.getElementById('tabContentForgot');
 
   if (!btnStudent || !btnOfficer) return;
 
@@ -471,6 +568,10 @@ function switchAuthTab(tab) {
   if (contentStudent) contentStudent.style.display = 'none';
   if (contentOfficer) contentOfficer.style.display = 'none';
   if (contentRegister) contentRegister.style.display = 'none';
+  if (contentForgot) contentForgot.style.display = 'none';
+
+  const alertBox = document.getElementById('authModalAlert');
+  if (alertBox) alertBox.style.display = 'none';
 
   if (tab === 'student') {
     btnStudent.style.background = '#ffffff';
@@ -490,13 +591,187 @@ function switchAuthTab(tab) {
       contentRegister.style.display = 'block';
       refreshStudentRegCaptcha();
     }
+  } else if (tab === 'forgot') {
+    if (contentForgot) {
+      contentForgot.style.display = 'block';
+      setForgotAccountType(subType === 'officer' || subType === 'leadership' ? 'leadership' : 'student');
+      refreshForgotCaptcha();
+    }
   }
 }
 
-function openAuthModal(initialTab = 'student') {
+// Toggle Account Type for Forgot Password (Student vs Leadership)
+function setForgotAccountType(type) {
+  const btnStu = document.getElementById('forgotTypeStudentBtn');
+  const btnOff = document.getElementById('forgotTypeOfficerBtn');
+  const typeInput = document.getElementById('forgotAccountTypeInput');
+  const label = document.getElementById('forgotIdentifierLabel');
+  const input = document.getElementById('forgotIdentifierInput');
+  const icon = document.getElementById('forgotIdentifierIcon');
+  const help = document.getElementById('forgotIdentifierHelp');
+
+  if (type === 'leadership' || type === 'officer') {
+    if (typeInput) typeInput.value = 'leadership';
+    if (btnOff) {
+      btnOff.style.background = '#ffffff';
+      btnOff.style.color = 'var(--primary, #641914)';
+      btnOff.style.boxShadow = '0 1px 4px rgba(0,0,0,0.12)';
+    }
+    if (btnStu) {
+      btnStu.style.background = 'transparent';
+      btnStu.style.color = 'var(--gray-600, #475569)';
+      btnStu.style.boxShadow = 'none';
+    }
+    if (label) label.innerHTML = 'Officer Username or Registered Email <span style="color: red;">*</span>';
+    if (input) input.placeholder = 'e.g. sslg_leader or leader@sslg.edu.ph';
+    if (icon) icon.className = 'fa-solid fa-user-shield';
+    if (help) help.textContent = 'Enter the username or email registered with your leadership officer account.';
+  } else {
+    if (typeInput) typeInput.value = 'student';
+    if (btnStu) {
+      btnStu.style.background = '#ffffff';
+      btnStu.style.color = 'var(--primary, #641914)';
+      btnStu.style.boxShadow = '0 1px 4px rgba(0,0,0,0.12)';
+    }
+    if (btnOff) {
+      btnOff.style.background = 'transparent';
+      btnOff.style.color = 'var(--gray-600, #475569)';
+      btnOff.style.boxShadow = 'none';
+    }
+    if (label) label.innerHTML = 'Student LRN / ID or Registered Email <span style="color: red;">*</span>';
+    if (input) input.placeholder = 'e.g. 2026-0001 or student@school.ph';
+    if (icon) icon.className = 'fa-solid fa-id-card';
+    if (help) help.textContent = 'Enter the exact LRN or email you registered with your student account.';
+  }
+}
+
+// Refresh Forgot Password CAPTCHA
+function refreshForgotCaptcha() {
+  const img = document.getElementById('forgotCaptchaImg');
+  const icon = document.getElementById('forgotCaptchaReloadIcon');
+  if (img) {
+    if (icon) icon.classList.add('fa-spin');
+    const basePath = '<?= $base_path ?>';
+    img.src = basePath + 'includes/captcha.php?t=' + new Date().getTime();
+    img.onload = () => {
+      if (icon) icon.classList.remove('fa-spin');
+    };
+  }
+  const captchaInput = document.getElementById('forgotCaptchaInput');
+  if (captchaInput) {
+    captchaInput.value = '';
+  }
+}
+
+// Handle Forgot Password Form Submission via AJAX
+function handleForgotPassSubmit(e) {
+  e.preventDefault();
+  const alertBox = document.getElementById('authModalAlert');
+  const alertText = document.getElementById('authModalAlertText');
+  const submitBtn = document.getElementById('btnSubmitForgotTicket');
+  const ident = document.getElementById('forgotIdentifierInput') ? document.getElementById('forgotIdentifierInput').value.trim() : '';
+  const captcha = document.getElementById('forgotCaptchaInput') ? document.getElementById('forgotCaptchaInput').value.trim() : '';
+  const accType = document.getElementById('forgotAccountTypeInput') ? document.getElementById('forgotAccountTypeInput').value : 'student';
+  const reason = document.getElementById('forgotReasonInput') ? document.getElementById('forgotReasonInput').value.trim() : '';
+
+  const showError = (msg) => {
+    if (alertBox && alertText) {
+      alertText.textContent = msg;
+      alertBox.style.display = 'block';
+      alertBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  };
+
+  if (!ident) {
+    showError("Please enter your account identifier (LRN, Username or Email).");
+    return false;
+  }
+  if (!captcha) {
+    showError("Please enter the security CAPTCHA code.");
+    return false;
+  }
+
+  if (alertBox) alertBox.style.display = 'none';
+
+  const origBtnText = submitBtn.innerHTML;
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Submitting Ticket...';
+
+  const formData = new FormData();
+  formData.append('ajax', '1');
+  formData.append('account_type', accType);
+  formData.append('identifier', ident);
+  formData.append('reason', reason);
+  formData.append('captcha', captcha);
+
+  const endpoint = '<?= $base_path ?>includes/forgot_password_handler.php';
+
+  fetch(endpoint, {
+    method: 'POST',
+    body: formData,
+    headers: {
+      'X-Requested-With': 'XMLHttpRequest'
+    }
+  })
+  .then(res => res.json())
+  .then(data => {
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = origBtnText;
+
+    if (data.success) {
+      const formEl = document.getElementById('forgotPasswordForm');
+      if (formEl) formEl.reset();
+      refreshForgotCaptcha();
+
+      if (typeof Swal !== 'undefined') {
+        Swal.fire({
+          icon: 'success',
+          title: 'Reset Ticket Submitted!',
+          html: `<div style="text-align: left; font-size: 0.9rem; line-height: 1.5;">
+                   <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+                     <strong style="color: #166534; display: block; font-size: 1rem;"><i class="fa-solid fa-ticket"></i> Reset Ticket #${data.ticket_id}</strong>
+                     <span style="color: #15803d; font-size: 0.85rem;">Account: <strong>${data.user_name}</strong></span><br>
+                     <span style="color: #64748b; font-size: 0.8rem;">Details: ${data.account_details}</span>
+                   </div>
+                   <p style="margin: 0; color: #334155;">Your password reset request has been logged for <strong>Administrator review</strong>. The admin can verify and reset your password in the admin panel.</p>
+                 </div>`,
+          confirmButtonColor: '#641914',
+          confirmButtonText: 'Return to Sign In'
+        }).then(() => {
+          switchAuthTab(accType === 'leadership' ? 'officer' : 'student');
+        });
+      } else {
+        alert(data.message);
+        switchAuthTab(accType === 'leadership' ? 'officer' : 'student');
+      }
+    } else {
+      refreshForgotCaptcha();
+      if (data.is_duplicate && typeof Swal !== 'undefined') {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Active Ticket Pending',
+          text: data.message,
+          confirmButtonColor: '#641914'
+        });
+      } else {
+        showError(data.message || 'Failed to submit reset ticket.');
+      }
+    }
+  })
+  .catch(err => {
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = origBtnText;
+    refreshForgotCaptcha();
+    showError("A network error occurred while submitting your ticket. Please try again.");
+  });
+
+  return false;
+}
+
+function openAuthModal(initialTab = 'student', subType = 'student') {
   const modal = document.getElementById('authLoginModal');
   if (modal) {
-    switchAuthTab(initialTab);
+    switchAuthTab(initialTab, subType);
     modal.classList.add('active');
     document.body.style.overflow = 'hidden';
   }
@@ -527,7 +802,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   } else if (modalParam) {
     const tab = (modalParam === 'officer_login' || modalParam === 'officer') ? 'officer' : 
-                (modalParam === 'register') ? 'register' : 'student';
+                (modalParam === 'register') ? 'register' : 
+                (modalParam === 'forgot') ? 'forgot' : 'student';
     openAuthModal(tab);
 
     if (errorParam) {

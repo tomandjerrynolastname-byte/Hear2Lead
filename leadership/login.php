@@ -36,7 +36,7 @@ if (empty($username) || empty($password)) {
     $stmt->execute([$username, $username]);
     $user = $stmt->fetch();
 
-    if ($user && (password_verify($password, $user['password']) || $password === 'admin123')) {
+    if ($user && password_verify($password, $user['password'])) {
         // Login Success -> Set Officer Session
         $_SESSION['user_id'] = $user['id'];
         $_SESSION['user_name'] = $user['full_name'];
