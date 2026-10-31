@@ -1125,6 +1125,12 @@ textarea.form-control {
 
 .modal-backdrop.active { display: flex; }
 
+/* Ensure SweetAlert2 popups always appear above all modals */
+body .swal2-container,
+.swal2-container {
+  z-index: 999999 !important;
+}
+
 .modal-card {
   background: var(--white);
   border-radius: var(--radius-lg);

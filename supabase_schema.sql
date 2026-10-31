@@ -312,9 +312,9 @@ SELECT setval('users_id_seq', (SELECT COALESCE(MAX(id), 1) FROM users));
 -- Seed Demo Students (Default password: student123)
 INSERT INTO students (id, student_lrn, full_name, grade_section, email, password, status, approved_by, approved_at)
 VALUES
-(1, '2026-0001', 'Alex Morgan', 'Grade 11 - STEM', 'alex.morgan@student.edu.ph', '$2y$10$q0Ukk9uQQ92vvLmHUBJpI.Ft6y4/8R2nrIbGJqaozXC.sd7FF8a9.', 'Approved', 3, CURRENT_TIMESTAMP),
-(2, '2026-0002', 'Samantha Cruz', 'Grade 10 - Rizal', 'samantha.cruz@student.edu.ph', '$2y$10$DJiHb/PBlxM8nEwP7i3jhex99G6Bm9MacJIn4oYxmgklSEUZdwdcq', 'Approved', 3, CURRENT_TIMESTAMP),
-(3, '2026-0003', 'Juan Dela Cruz', 'Grade 12 - STEM', 'juan.student@hear2lead.edu.ph', '$2y$10$dUHysNgmk6Q2.NG7U9A11exvwZx7XI6/caGn8eA/tRGQTfs0iPw9m', 'Approved', 3, CURRENT_TIMESTAMP)
+(1, '2026-0001', 'Alex Morgan', 'Grade 11 - STEM', 'alex.morgan@student.edu.ph', '$2y$10$UGMFyI2pF9yi3cFxn5yO5.JwwxC9NYERdxxJzGBSYNecYPja9EiiO', 'Approved', 3, CURRENT_TIMESTAMP),
+(2, '2026-0002', 'Samantha Cruz', 'Grade 10 - Rizal', 'samantha.cruz@student.edu.ph', '$2y$10$UGMFyI2pF9yi3cFxn5yO5.JwwxC9NYERdxxJzGBSYNecYPja9EiiO', 'Approved', 3, CURRENT_TIMESTAMP),
+(3, '2026-0003', 'Juan Dela Cruz', 'Grade 12 - STEM', 'juan.student@hear2lead.edu.ph', '$2y$10$UGMFyI2pF9yi3cFxn5yO5.JwwxC9NYERdxxJzGBSYNecYPja9EiiO', 'Approved', 3, CURRENT_TIMESTAMP)
 ON CONFLICT (id) DO NOTHING;
 
 SELECT setval('students_id_seq', (SELECT COALESCE(MAX(id), 1) FROM students));

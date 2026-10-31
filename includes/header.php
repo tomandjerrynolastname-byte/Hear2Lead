@@ -143,6 +143,7 @@ $default_header_notif_tab = ($is_admin && empty($header_task_reminders)) ? 'logi
 
   <!-- SweetAlert2 -->
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>body .swal2-container, .swal2-container { z-index: 999999 !important; }</style>
 </head>
 <body>
 <!-- Global Page Transition Loader & Progress Bar -->

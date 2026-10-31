@@ -171,6 +171,31 @@ function getDBConnection() {
                     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
                     PDO::ATTR_EMULATE_PREPARES => false
                 ]);
+
+                // Auto-create password_reset_tickets table & fix demo student password hash in Supabase PostgreSQL
+                try {
+                    $pdo->exec("CREATE TABLE IF NOT EXISTS password_reset_tickets (
+                        id SERIAL PRIMARY KEY,
+                        account_type VARCHAR(20) NOT NULL DEFAULT 'Student',
+                        account_id INT NOT NULL,
+                        identifier_submitted VARCHAR(150) NOT NULL,
+                        user_name VARCHAR(120) NOT NULL,
+                        user_email VARCHAR(120) DEFAULT NULL,
+                        account_details VARCHAR(255) DEFAULT NULL,
+                        request_reason TEXT DEFAULT NULL,
+                        status VARCHAR(20) NOT NULL DEFAULT 'Pending',
+                        resolved_by INT DEFAULT NULL,
+                        resolved_by_name VARCHAR(120) DEFAULT NULL,
+                        resolution_notes TEXT DEFAULT NULL,
+                        resolved_at TIMESTAMP DEFAULT NULL,
+                        ip_address VARCHAR(60) DEFAULT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )");
+                    $updDemo = $pdo->prepare("UPDATE students SET password = ? WHERE student_lrn IN ('2026-0001', '2026-0002', '2026-0003') AND password = ?");
+                    $updDemo->execute(['$2y$10$UGMFyI2pF9yi3cFxn5yO5.JwwxC9NYERdxxJzGBSYNecYPja9EiiO', '$2y$10$dUHysNgmk6Q2.NG7U9A11exvwZx7XI6/caGn8eA/tRGQTfs0iPw9m']);
+                } catch (PDOException $e) {
+                    // Ignore if table already exists or connection is read-only
+                }
             } catch (PDOException $e) {
                 die("<div style='padding: 20px; font-family: sans-serif; background: #fee2e2; border: 1px solid #f87171; color: #991b1b; border-radius: 8px; margin: 20px;'>
                     <h3>Supabase PostgreSQL Database Connection Error</h3>

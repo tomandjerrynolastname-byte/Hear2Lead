@@ -56,10 +56,6 @@ $base_path = $is_subfolder ? '../' : './';
 
       <!-- 1. STUDENT LOGIN TAB -->
       <div id="tabContentStudent">
-        <div style="background: #eff6ff; border: 1px dashed #3b82f6; border-radius: 6px; padding: 0.55rem 0.85rem; font-size: 0.8rem; color: #1e40af; margin-bottom: 1.1rem;">
-          <strong><i class="fa-solid fa-circle-info"></i> Demo Student:</strong> LRN: <code>2026-0001</code> | Pass: <code>student123</code>
-        </div>
-
         <form method="POST" action="<?= $base_path ?>student/login.php">
           <input type="hidden" name="from_modal" value="1">
           <input type="hidden" name="redirect_error" value="<?= htmlspecialchars($_SERVER['REQUEST_URI']) ?>">
@@ -99,10 +95,6 @@ $base_path = $is_subfolder ? '../' : './';
 
       <!-- 2. OFFICER LOGIN TAB -->
       <div id="tabContentOfficer" style="display: none;">
-        <div style="background: #fdf4ff; border: 1px dashed #c084fc; border-radius: 6px; padding: 0.55rem 0.85rem; font-size: 0.8rem; color: #7e22ce; margin-bottom: 1.1rem;">
-          <strong><i class="fa-solid fa-circle-info"></i> Demo Officer:</strong> User: <code>sslg_leader</code> | Pass: <code>admin123</code>
-        </div>
-
         <form method="POST" action="<?= $base_path ?>leadership/login.php">
           <input type="hidden" name="from_modal" value="1">
           <input type="hidden" name="redirect_error" value="<?= htmlspecialchars($_SERVER['REQUEST_URI']) ?>">
@@ -374,7 +366,13 @@ $base_path = $is_subfolder ? '../' : './';
   </div>
 </div>
 
-<!-- Ensure SweetAlert2 is loaded on any page using the auth modal -->
+<!-- Ensure SweetAlert2 is loaded and always renders on top of all modals -->
+<style>
+  body .swal2-container,
+  .swal2-container {
+    z-index: 999999 !important;
+  }
+</style>
 <script>
 if (typeof Swal === 'undefined') {
   document.write('<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"><\/script>');
@@ -755,7 +753,11 @@ function handleForgotPassSubmit(e) {
                  </div>`,
           confirmButtonColor: '#641914',
           confirmButtonText: 'Return to Sign In',
-          allowOutsideClick: false
+          allowOutsideClick: false,
+          didOpen: (popup) => {
+            const c = popup.closest('.swal2-container') || document.querySelector('.swal2-container');
+            if (c) c.style.setProperty('z-index', '999999', 'important');
+          }
         }).then(() => {
           switchAuthTab(accType === 'leadership' ? 'officer' : 'student');
         });
@@ -780,7 +782,11 @@ function handleForgotPassSubmit(e) {
           icon: 'warning',
           title: 'Active Ticket Pending',
           text: data.message,
-          confirmButtonColor: '#641914'
+          confirmButtonColor: '#641914',
+          didOpen: (popup) => {
+            const c = popup.closest('.swal2-container') || document.querySelector('.swal2-container');
+            if (c) c.style.setProperty('z-index', '999999', 'important');
+          }
         });
       };
 
@@ -874,7 +880,11 @@ document.addEventListener('DOMContentLoaded', () => {
                      </p>
                    </div>`,
             confirmButtonColor: '#641914',
-            confirmButtonText: 'Return to Sign In'
+            confirmButtonText: 'Return to Sign In',
+            didOpen: (popup) => {
+              const c = popup.closest('.swal2-container') || document.querySelector('.swal2-container');
+              if (c) c.style.setProperty('z-index', '999999', 'important');
+            }
           }).then(() => {
             switchAuthTab('student');
           });
