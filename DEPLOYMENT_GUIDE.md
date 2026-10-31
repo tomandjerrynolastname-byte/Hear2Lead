@@ -1,84 +1,110 @@
-# Hear2Lead Deployment Guide (Supabase + Vercel + Git)
+# Hear2Lead — Complete Deployment & Connectivity Guide (Local XAMPP + Vercel + Supabase + GitHub)
 
-This guide walks you through deploying **Hear2Lead** to **Supabase** (PostgreSQL Database) and **Vercel** (Serverless Hosting), with automatic continuous deployment connected to your **GitHub** repository.
+**Live Production URL:** [https://hear2lead-live.vercel.app/](https://hear2lead-live.vercel.app/)
 
----
-
-## Architecture Overview
-
-- **Database**: Supabase PostgreSQL
-- **Backend / Routing**: Vercel Serverless PHP (`vercel-php`) + `api/index.php` Router
-- **Static Assets**: Vercel Edge Network (`assets/css`, `assets/js`, `assets/uploads`)
-- **Version Control**: Git / GitHub (`https://github.com/benejr27/StudentLeadership.git`)
+This document explains **what tools and technologies are used** to run **Hear2Lead** both locally and in the cloud, **how each component connects**, and **how to deploy updates**.
 
 ---
 
-## Step 1: Set Up Supabase Database
+## 1. Technologies & Platforms Used for Deployment
 
-1. Go to [Supabase](https://supabase.com) and log in (or sign up).
-2. Click **New Project**:
-   - **Name**: `Hear2Lead` (or any name you prefer)
-   - **Database Password**: Set a strong password (save this safely!)
-   - **Region**: Choose the region closest to your users (e.g., `Singapore (ap-southeast-1)` or `US East`).
-   - Click **Create new project**.
-
-3. Once your project is created, open the **SQL Editor** from the left sidebar.
-4. Click **New Query**, open the `supabase_schema.sql` file in your repository, and copy all its contents.
-5. Paste the SQL into the Supabase SQL Editor and click **Run**.
-   - This creates all required tables (`organizations`, `users`, `students`, `tasks`, `projects`, `accomplishments`, `feedbacks`, `user_sessions`, audit logs, etc.).
-   - It also populates the initial seed data (default organizations, admin officer, demo students, projects, and tasks).
-
-6. Retrieve your Supabase Connection String:
-   - Go to **Project Settings** (gear icon) -> **Database**.
-   - Scroll down to **Connection parameters** or **Connection string**.
-   - Under **Connection string**, select **URI**.
-   - Copy the string. It will look like this:
-     ```text
-     postgresql://postgres.[your-project-ref]:[YOUR-PASSWORD]@aws-0-[region].pooler.supabase.com:6543/postgres
-     ```
-   - Replace `[YOUR-PASSWORD]` with the actual database password you created in step 2.
+| Component | Local Environment | Cloud Production Environment | Purpose |
+|---|---|---|---|
+| **Application Runtime** | XAMPP Apache + PHP 8.2+ | **Vercel Serverless Functions** (`vercel-php@0.7.3`) | Executes PHP scripts (`index.php`, `student/*.php`, `leadership/*.php`, `includes/*.php`) |
+| **Request Router** | Apache Direct File Serving | **`vercel.json` + `api/index.php`** | Routes incoming HTTP requests to the matching `.php` file or static asset |
+| **Database Server** | Local MySQL / MariaDB (`3306`) | **Supabase PostgreSQL** (Pooler Port `6543`) | Stores organizations, officers, students, projects, tasks, accomplishments, feedbacks, password reset tickets, and audit logs |
+| **Database Compatibility Layer** | `config/db.php` (PDO MySQL) | **`SupabaseCompatPDO` (`config/db.php`)** | Automatically detects environment variables and translates MySQL queries (`DATE_FORMAT`, `CURDATE()`, `IFNULL`, backticks) into PostgreSQL syntax at runtime |
+| **Session Management** | PHP Native Session | **`DatabaseSessionHandler` (`user_sessions` table)** | Persists login & CAPTCHA sessions across stateless Vercel serverless function invocations |
+| **Source Control & CI/CD** | **Git + GitHub Desktop** | **GitHub (`benejr27/Hear2Lead-1` & `tomandjerrynolastname-byte/Hear2Lead`)** | Dual-remote Git push (`origin` pushes to both repositories simultaneously) triggering automatic Vercel builds |
 
 ---
 
-## Step 2: Deploy to Vercel
+## 2. How the Connectivity Works (Architecture Flow)
 
-1. Log in to [Vercel](https://vercel.com).
-2. Click **Add New...** -> **Project**.
-3. Under **Import Git Repository**, select your repository:
-   - `benejr27/StudentLeadership`
-4. In the Project Configuration screen:
-   - **Framework Preset**: Leave as *Other*.
-   - **Root Directory**: Leave as `./` (root).
-5. Expand the **Environment Variables** section and add:
+```text
+[ User Browser ]
+       │
+       ├──► Local: http://localhost/Hear2Lead/
+       │      └──► Apache Web Server (XAMPP)
+       │             └──► config/db.php (Detects no DATABASE_URL -> Uses Local MySQL)
+       │                    └──► MySQL Database (127.0.0.1:3306 / student_leadership_db)
+       │
+       └──► Cloud: https://hear2lead-live.vercel.app/
+              └──► Vercel Edge Network (vercel.json)
+                     ├──► /assets/* ──► Served directly as static CSS/JS/Images
+                     └──► /*        ──► Routed to Serverless Entrypoint: api/index.php
+                                          └──► Loads target PHP file (e.g. leadership/users.php)
+                                                 └──► config/db.php (Detects DATABASE_URL / DB_CONNECTION=pgsql)
+                                                        ├──► SupabaseCompatPDO (Connects via SSL to Supabase Pooler)
+                                                        ├──► DatabaseSessionHandler (Stores $_SESSION in user_sessions)
+                                                        └──► Supabase PostgreSQL Database (Port 6543)
+```
 
-   | Key | Value | Notes |
-   |---|---|---|
-   | `DATABASE_URL` | `postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres` | Your Supabase pooled connection string (port `6543`) |
-   | `DB_CONNECTION` | `pgsql` | Tells Hear2Lead to use the PostgreSQL driver |
-
-6. Click **Deploy**.
-7. Vercel will build the project using `vercel-php@0.7.3` and provide a live URL (e.g., `https://student-leadership.vercel.app`).
-
----
-
-## Step 3: Default Login Credentials
-
-After deploying and seeding the database with `supabase_schema.sql`:
-
-### 1. Leadership / Administrator Portal (`/leadership/login.php`)
-- **Username**: `admin`
-- **Password**: `password` (or the hash from your original database)
-
-### 2. Supreme Secondary Learner Government Leader (`/leadership/login.php`)
-- **Username**: `maria_sslg`
-- **Password**: Same as default password hash or reset via admin
-
-### 3. Student Portal (`/student/login.php`)
-- **LRN**: `2026-0001`
-- **Password**: `student123`
+### Key Connectivity Files in the Codebase:
+1. **[`vercel.json`](vercel.json)**:
+   - Configures the Vercel serverless PHP runtime (`vercel-php@0.7.3`) on `api/index.php`.
+   - Routes `/assets/(.*)` directly to `/assets/$1` for fast static delivery and forwards all dynamic routes `/(.*)` to `/api/index.php`.
+2. **[`api/index.php`](api/index.php)**:
+   - Acts as the Serverless Front Controller on Vercel.
+   - Parses `$_SERVER['REQUEST_URI']`, resolves the target PHP file in the project root (`/index.php`, `/student/*.php`, `/leadership/*.php`, `/includes/*.php`), sets the working directory (`chdir`), and executes the script seamlessly.
+3. **[`config/db.php`](config/db.php)**:
+   - **Auto-Detection**: Checks for `DATABASE_URL` or `DB_CONNECTION=pgsql` environment variables.
+   - **If Cloud (`pgsql`)**: Parses the `DATABASE_URL` URI and connects to Supabase PostgreSQL with `sslmode=require`. Uses `SupabaseCompatPDO` to translate MySQL SQL functions (`DATE_FORMAT`, `CURDATE()`, `NOW()`, `LAST_INSERT_ID()`) into PostgreSQL equivalents automatically, and registers `DatabaseSessionHandler` so `$_SESSION` (logins and CAPTCHAs) works reliably across serverless instances. Also auto-provisions new tables such as `password_reset_tickets`.
+   - **If Local (`mysql`)**: Connects to `127.0.0.1` (`root`), auto-creates `student_leadership_db` if missing, imports `database.sql`, and runs automatic schema migrations.
 
 ---
 
-## Local Development (XAMPP MySQL)
+## 3. How to Deploy Locally (XAMPP)
 
-Your local development environment remains 100% functional. When no `DATABASE_URL` or `DB_CONNECTION=pgsql` is set, Hear2Lead automatically connects to your local XAMPP MySQL database (`127.0.0.1`, user `root`, database `student_leadership_db`).
+1. Install and open **XAMPP Control Panel**.
+2. Start **Apache** and **MySQL**.
+3. Place the project in:
+   C:\xampp\htdocs\Hear2Lead
+4. Open your browser and go to:
+   http://localhost/Hear2Lead/
+5. **Zero-Config Database Setup**:
+   - On the first page load, `config/db.php` automatically creates the `student_leadership_db` MySQL database, initializes all tables (including `password_reset_tickets`, `user_roles`, `student_logs`, `login_logs`, etc.), and seeds the default organizations and accounts.
+
+---
+
+## 4. How to Deploy to Cloud (Supabase + Vercel + GitHub)
+
+### Step 1: Set Up Supabase PostgreSQL Database
+1. Log in to [Supabase](https://supabase.com) under your deployment account (`tomandjerrynolastname@gmail.com`).
+2. Create a project (`Hear2Lead`) and open the **SQL Editor**.
+3. Copy the contents of [`supabase_schema.sql`](supabase_schema.sql), paste into the SQL Editor, and click **Run**.
+4. Go to **Project Settings** → **Database** → **Connection string** → select **URI** (Transaction Pooler, port `6543`):
+   ```text
+   postgresql://postgres.[project-ref]:[YOUR-PASSWORD]@aws-0-[region].pooler.supabase.com:6543/postgres
+   ```
+  
+### Step 2: Configure Vercel Project
+1. Log in to [Vercel](https://vercel.com) (`tomandjerrynolastname-byte`).
+2. Import the GitHub repository **`tomandjerrynolastname-byte/Hear2Lead`**.
+3. Under **Settings** → **Environment Variables**, configure:
+
+   | Key | Value |
+   |---|---|
+   | `DATABASE_URL` | `postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres` |
+   | `DB_CONNECTION` | `pgsql` |
+
+4. Vercel builds the project using `vercel.json` and publishes it at:
+   **[https://hear2lead-live.vercel.app/](https://hear2lead-live.vercel.app/)**
+
+### Step 3: Dual-Repository Git Push Workflow (`benejr27` ➔ `tomandjerrynolastname-byte` ➔ Vercel)
+Your local Git configuration (`.git/config`) is configured with **dual push URLs** under `origin`:
+```ini
+[remote "origin"]
+	url = https://github.com/benejr27/Hear2Lead-1.git
+	pushurl = https://github.com/benejr27/Hear2Lead-1.git
+	pushurl = https://github.com/tomandjerrynolastname-byte/Hear2Lead.git
+	fetch = +refs/heads/*:refs/remotes/origin/*
+[user]
+	name = tomandjerrynolastname-byte
+	email = tomandjerrynolastname@gmail.com
+```
+- **`benejr27`** is added as a Collaborator on **`tomandjerrynolastname-byte/Hear2Lead`**.
+- Whenever you commit and click **Push origin** in **GitHub Desktop**, Git automatically pushes your code to **both**:
+  1. `https://github.com/benejr27/Hear2Lead-1.git`
+  2. `https://github.com/tomandjerrynolastname-byte/Hear2Lead.git`
+- As soon as the push lands on `tomandjerrynolastname-byte/Hear2Lead`, **Vercel automatically builds and updates `https://hear2lead-live.vercel.app/`** within ~20–30 seconds!
