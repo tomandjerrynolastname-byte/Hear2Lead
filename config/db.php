@@ -229,6 +229,11 @@ function getDBConnection() {
                     )");
                     $updDemo = $pdo->prepare("UPDATE students SET password = ? WHERE student_lrn IN ('2026-0001', '2026-0002', '2026-0003') AND password = ?");
                     $updDemo->execute(['$2y$10$UGMFyI2pF9yi3cFxn5yO5.JwwxC9NYERdxxJzGBSYNecYPja9EiiO', '$2y$10$dUHysNgmk6Q2.NG7U9A11exvwZx7XI6/caGn8eA/tRGQTfs0iPw9m']);
+                    // Ensure organizations.logo supports base64 Data URIs on serverless deployments
+                    $logoColType = $pdo->query("SELECT data_type FROM information_schema.columns WHERE table_name = 'organizations' AND column_name = 'logo'")->fetchColumn();
+                    if ($logoColType && strtolower($logoColType) !== 'text') {
+                        $pdo->exec("ALTER TABLE organizations ALTER COLUMN logo TYPE TEXT");
+                    }
                 } catch (PDOException $e) {
                     // Ignore if table already exists or connection is read-only
                 }
@@ -427,6 +432,12 @@ function getDBConnection() {
                     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+                // Ensure organizations.logo supports base64 Data URIs
+                $logoColInfo = $pdo->query("SHOW COLUMNS FROM `organizations` LIKE 'logo'")->fetch();
+                if ($logoColInfo && stripos($logoColInfo['Type'] ?? '', 'varchar') !== false) {
+                    $pdo->exec("ALTER TABLE `organizations` MODIFY COLUMN `logo` LONGTEXT DEFAULT NULL");
+                }
+
             } catch (PDOException $e) {
                 die("<div style='padding: 20px; font-family: sans-serif; background: #fee2e2; border: 1px solid #f87171; color: #991b1b; border-radius: 8px; margin: 20px;'>
                     <h3>Database Connection Error</h3>
@@ -438,6 +449,25 @@ function getDBConnection() {
     }
 
     return $pdo;
+}
+
+/**
+ * Resolve an organization's logo value (Data URI, external URL, or local filename) into a renderable src URL.
+ */
+function getOrgLogoUrl(?string $logo, string $relativePrefix = '../'): ?string {
+    $logo = trim((string)$logo);
+    if ($logo === '') {
+        return null;
+    }
+    if (strpos($logo, 'data:image/') === 0 || strpos($logo, 'http://') === 0 || strpos($logo, 'https://') === 0) {
+        return $logo;
+    }
+    $filename = basename($logo);
+    $localPath = __DIR__ . '/../assets/uploads/logos/' . $filename;
+    if (file_exists($localPath)) {
+        return $relativePrefix . 'assets/uploads/logos/' . rawurlencode($filename);
+    }
+    return null;
 }
 
 // Session initialization with serverless support

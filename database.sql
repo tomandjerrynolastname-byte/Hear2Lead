@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS `organizations` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `name` VARCHAR(150) NOT NULL,
   `acronym` VARCHAR(20) NOT NULL,
-  `logo` VARCHAR(255) DEFAULT NULL,
+  `logo` LONGTEXT DEFAULT NULL,
   `description` TEXT,
   `category` VARCHAR(50) DEFAULT 'Student Council',
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP

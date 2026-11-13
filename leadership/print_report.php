@@ -844,8 +844,9 @@ $back_query = http_build_query([
       </div>
 
       <div style="display: flex; justify-content: flex-end;">
-        <?php if (!empty($active_org_logo) && file_exists(__DIR__ . '/../assets/uploads/logos/' . $active_org_logo)): ?>
-          <img src="../assets/uploads/logos/<?= htmlspecialchars($active_org_logo) ?>" alt="Org Logo" class="letterhead-logo">
+        <?php $resolved_org_logo = getOrgLogoUrl($active_org_logo ?? null, '../'); ?>
+        <?php if ($resolved_org_logo): ?>
+          <img src="<?= htmlspecialchars($resolved_org_logo) ?>" alt="Org Logo" class="letterhead-logo">
         <?php else: ?>
           <div class="letterhead-seal-placeholder">
             <i class="fa-solid fa-shield-halved" style="font-size: 1.25rem; margin-bottom: 2px;"></i>

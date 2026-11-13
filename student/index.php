@@ -164,7 +164,7 @@ $projects = $pdo->query("SELECT p.*, o.name as org_name, o.acronym FROM projects
       <div class="panel-header">Active Organizations</div>
       <div style="display: flex; flex-direction: column; gap: 0.85rem;">
         <?php foreach ($orgs as $o): 
-          $logo_path = !empty($o['logo']) && file_exists(__DIR__ . '/../assets/uploads/logos/' . $o['logo']) ? '../assets/uploads/logos/' . $o['logo'] : null;
+          $logo_path = getOrgLogoUrl($o['logo'] ?? null, '../');
         ?>
           <div style="display: flex; align-items: center; gap: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--gray-200);">
             <?php if ($logo_path): ?>

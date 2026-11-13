@@ -15,43 +15,94 @@ $error_msg = '';
 
 $upload_dir = __DIR__ . '/../assets/uploads/logos/';
 
-// Ensure upload directory exists
-if (!file_exists($upload_dir)) {
-    mkdir($upload_dir, 0777, true);
-}
-
-// Function to handle image upload
+// Function to handle image upload (stores as compact base64 Data URI in DB so it works on Vercel serverless + local XAMPP)
 function handleLogoUpload($file, $existing_logo = null) {
     global $upload_dir;
-    
-    if (!isset($file) || $file['error'] !== UPLOAD_ERR_OK) {
+
+    if (!isset($file) || !isset($file['error']) || $file['error'] === UPLOAD_ERR_NO_FILE) {
         return $existing_logo; // Keep existing if no file uploaded
     }
 
-    $allowed_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
-    $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    if ($file['error'] === UPLOAD_ERR_INI_SIZE || $file['error'] === UPLOAD_ERR_FORM_SIZE) {
+        throw new Exception("Logo file size exceeds the allowed upload limit (Max 4MB).");
+    }
 
-    if (!in_array($file_ext, $allowed_extensions)) {
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        throw new Exception("Failed to upload logo image (Error code: " . intval($file['error']) . ").");
+    }
+
+    $allowed_mimes = [
+        'jpg'  => 'image/jpeg',
+        'jpeg' => 'image/jpeg',
+        'png'  => 'image/png',
+        'gif'  => 'image/gif',
+        'webp' => 'image/webp',
+        'svg'  => 'image/svg+xml'
+    ];
+    $file_ext = strtolower(pathinfo($file['name'] ?? '', PATHINFO_EXTENSION));
+
+    if (!isset($allowed_mimes[$file_ext])) {
         throw new Exception("Invalid image file format. Allowed: JPG, PNG, GIF, WEBP, SVG.");
     }
 
-    if ($file['size'] > 5 * 1024 * 1024) { // 5MB limit
-        throw new Exception("Logo file size must be less than 5MB.");
+    if (($file['size'] ?? 0) > 4 * 1024 * 1024) { // 4MB limit (safe for Vercel 4.5MB serverless payload)
+        throw new Exception("Logo file size must be less than 4MB.");
     }
 
-    // Generate unique filename
-    $new_filename = 'logo_' . time() . '_' . uniqid() . '.' . $file_ext;
-    $target_path = $upload_dir . $new_filename;
+    $raw_bytes = @file_get_contents($file['tmp_name']);
+    if ($raw_bytes === false || $raw_bytes === '') {
+        throw new Exception("Failed to read uploaded logo image.");
+    }
 
-    if (move_uploaded_file($file['tmp_name'], $target_path)) {
-        // Delete old logo if replacing
-        if ($existing_logo && file_exists($upload_dir . $existing_logo)) {
-            @unlink($upload_dir . $existing_logo);
+    $mime = $allowed_mimes[$file_ext];
+
+    // Downscale large raster logos (> 350KB) when GD is available to keep DB & page loads fast
+    if ($file_ext !== 'svg' && $file_ext !== 'gif' && strlen($raw_bytes) > 350 * 1024 && function_exists('imagecreatefromstring')) {
+        $src_img = @imagecreatefromstring($raw_bytes);
+        if ($src_img !== false) {
+            $orig_w = imagesx($src_img);
+            $orig_h = imagesy($src_img);
+            $max_dim = 512;
+            if ($orig_w > $max_dim || $orig_h > $max_dim) {
+                $scale = min($max_dim / $orig_w, $max_dim / $orig_h);
+                $new_w = max(1, (int)round($orig_w * $scale));
+                $new_h = max(1, (int)round($orig_h * $scale));
+                $dst_img = imagecreatetruecolor($new_w, $new_h);
+                if ($file_ext === 'png' || $file_ext === 'webp') {
+                    imagealphablending($dst_img, false);
+                    imagesavealpha($dst_img, true);
+                    $transparent = imagecolorallocatealpha($dst_img, 0, 0, 0, 127);
+                    imagefilledrectangle($dst_img, 0, 0, $new_w, $new_h, $transparent);
+                }
+                imagecopyresampled($dst_img, $src_img, 0, 0, 0, 0, $new_w, $new_h, $orig_w, $orig_h);
+                ob_start();
+                if ($file_ext === 'png') {
+                    imagepng($dst_img, null, 7);
+                } elseif ($file_ext === 'webp' && function_exists('imagewebp')) {
+                    imagewebp($dst_img, null, 85);
+                } else {
+                    imagejpeg($dst_img, null, 85);
+                    $mime = 'image/jpeg';
+                }
+                $resized = ob_get_clean();
+                imagedestroy($dst_img);
+                if ($resized !== false && $resized !== '') {
+                    $raw_bytes = $resized;
+                }
+            }
+            imagedestroy($src_img);
         }
-        return $new_filename;
-    } else {
-        throw new Exception("Failed to save uploaded logo image.");
     }
+
+    // Delete old local logo file if replacing (only when local filesystem is writable)
+    if ($existing_logo && strpos($existing_logo, 'data:') !== 0) {
+        $old_path = $upload_dir . basename($existing_logo);
+        if (file_exists($old_path) && is_writable($old_path)) {
+            @unlink($old_path);
+        }
+    }
+
+    return 'data:' . $mime . ';base64,' . base64_encode($raw_bytes);
 }
 
 // Handle CRUD Operations
@@ -107,7 +158,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $error_msg = "Another organization already uses this Name or Acronym.";
                 } else {
                     // Fetch existing logo
-                    $curr_org = $pdo->query("SELECT logo FROM organizations WHERE id = $org_id")->fetch();
+                    $curr_stmt = $pdo->prepare("SELECT logo FROM organizations WHERE id = ?");
+                    $curr_stmt->execute([$org_id]);
+                    $curr_org = $curr_stmt->fetch();
                     $existing_logo = $curr_org['logo'] ?? null;
 
                     $logo_filename = handleLogoUpload($_FILES['logo'] ?? null, $existing_logo);
@@ -137,10 +190,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($org_id == $_SESSION['org_id']) {
             $error_msg = "You cannot delete your own active organization while logged in!";
         } else {
-            // Delete associated logo file
-            $curr_org = $pdo->query("SELECT logo FROM organizations WHERE id = $org_id")->fetch();
-            if ($curr_org && !empty($curr_org['logo']) && file_exists($upload_dir . $curr_org['logo'])) {
-                @unlink($upload_dir . $curr_org['logo']);
+            // Delete associated local logo file if applicable
+            $curr_stmt = $pdo->prepare("SELECT logo FROM organizations WHERE id = ?");
+            $curr_stmt->execute([$org_id]);
+            $curr_org = $curr_stmt->fetch();
+            if ($curr_org && !empty($curr_org['logo']) && strpos($curr_org['logo'], 'data:') !== 0) {
+                $old_path = $upload_dir . basename($curr_org['logo']);
+                if (file_exists($old_path) && is_writable($old_path)) {
+                    @unlink($old_path);
+                }
             }
 
             $stmt = $pdo->prepare("DELETE FROM organizations WHERE id = ?");
@@ -230,7 +288,9 @@ include_once __DIR__ . '/../includes/header.php';
   <?php else: ?>
     <?php foreach ($organizations as $org): 
       $is_my_org = ($org['id'] == $_SESSION['org_id']);
-      $logo_url = !empty($org['logo']) && file_exists($upload_dir . $org['logo']) ? '../assets/uploads/logos/' . $org['logo'] : null;
+      $logo_url = getOrgLogoUrl($org['logo'] ?? null, '../');
+      $org_for_modal = $org;
+      unset($org_for_modal['logo']);
     ?>
       <div class="card" style="<?= $is_my_org ? 'border: 2px solid var(--primary);' : '' ?>">
         <div class="card-header">
@@ -282,7 +342,7 @@ include_once __DIR__ . '/../includes/header.php';
         <div class="card-footer">
           <span style="font-size: 0.75rem; color: var(--gray-500);"><i class="fa-regular fa-calendar"></i> Added: <?= date('M Y', strtotime($org['created_at'])) ?></span>
           <div style="display: flex; gap: 0.4rem;">
-            <button class="btn btn-secondary btn-sm" onclick='openOrgEditModal(<?= json_encode($org) ?>)' title="Edit Organization">
+            <button class="btn btn-secondary btn-sm" onclick='openOrgEditModal(<?= htmlspecialchars(json_encode($org_for_modal), ENT_QUOTES, "UTF-8") ?>)' title="Edit Organization">
               <i class="fa-solid fa-pen"></i> Edit
             </button>
             <?php if (!$is_my_org): ?>
@@ -337,7 +397,7 @@ include_once __DIR__ . '/../includes/header.php';
         <div class="form-group">
           <label class="form-label">Organization Logo Image (Optional)</label>
           <input type="file" name="logo" class="form-control" accept="image/*">
-          <small style="color: var(--gray-500); font-size: 0.75rem;">Supported: JPG, PNG, WEBP, SVG (Max 5MB)</small>
+          <small style="color: var(--gray-500); font-size: 0.75rem;">Supported: JPG, PNG, GIF, WEBP, SVG (Max 4MB)</small>
         </div>
 
         <div class="form-group">
